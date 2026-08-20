@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Mail, CheckCircle2, RefreshCw, AlertCircle } from 'lucide-react';
+import { safeFetchJson } from '../utils/api';
 
 export const NewsletterSection: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -15,18 +16,17 @@ export const NewsletterSection: React.FC = () => {
     setErrorMessage(null);
 
     try {
-      const res = await fetch('/api/newsletter/subscribe', {
+      const res = await safeFetchJson('/api/newsletter/subscribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: email.trim() }),
       });
 
-      const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to subscribe.');
+        throw new Error(res.error || 'Failed to subscribe.');
       }
 
-      setSuccessMessage(data.message || `✓ You're registered! We'll send updates to ${email}.`);
+      setSuccessMessage(res.data?.message || `✓ You're registered! We'll send updates to ${email}.`);
       setEmail('');
     } catch (err: any) {
       setErrorMessage(err.message || 'Subscription failed. Try again.');

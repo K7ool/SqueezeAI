@@ -12,6 +12,7 @@ import { ProjectFolderInspector } from './ProjectFolderInspector';
 import { LuauCodeViewer } from './LuauCodeViewer';
 import { formatAndSanitizeLuau } from '../utils/luauFormatter';
 import { saveSingleScriptToDisk } from '../utils/projectDisk';
+import { safeFetchJson } from '../utils/api';
 
 interface DashboardModalProps {
   isOpen: boolean;
@@ -76,25 +77,23 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
     setIsLoading(true);
     try {
       const [scriptsRes, keysRes] = await Promise.all([
-        fetch('/api/scripts', {
+        safeFetchJson('/api/scripts', {
           headers: token ? { 'Authorization': `Bearer ${token}` } : {}
         }),
-        fetch('/api/api-keys', {
+        safeFetchJson('/api/api-keys', {
           headers: token ? { 'Authorization': `Bearer ${token}` } : {}
         })
       ]);
 
-      if (scriptsRes.ok) {
-        const data = await scriptsRes.json();
-        setScripts(data.scripts || []);
-        if (data.scripts && data.scripts.length > 0 && !selectedScript) {
-          setSelectedScript(data.scripts[0]);
+      if (scriptsRes.ok && scriptsRes.data?.scripts) {
+        setScripts(scriptsRes.data.scripts);
+        if (scriptsRes.data.scripts.length > 0 && !selectedScript) {
+          setSelectedScript(scriptsRes.data.scripts[0]);
         }
       }
 
-      if (keysRes.ok) {
-        const kData = await keysRes.json();
-        setApiKeys(kData.keys || []);
+      if (keysRes.ok && keysRes.data?.keys) {
+        setApiKeys(keysRes.data.keys);
       }
     } catch (e) {
       console.error('Error fetching dashboard data:', e);
@@ -113,7 +112,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
 
   const handleToggleFavorite = async (scriptId: string) => {
     try {
-      const res = await fetch(`/api/scripts/${scriptId}/favorite`, {
+      const res = await safeFetchJson(`/api/scripts/${scriptId}/favorite`, {
         method: 'POST',
         headers: token ? { 'Authorization': `Bearer ${token}` } : {}
       });
@@ -131,7 +130,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
   const handleDeleteScript = async (scriptId: string) => {
     if (!confirm('Are you sure you want to delete this script from your history?')) return;
     try {
-      const res = await fetch(`/api/scripts/${scriptId}`, {
+      const res = await safeFetchJson(`/api/scripts/${scriptId}`, {
         method: 'DELETE',
         headers: token ? { 'Authorization': `Bearer ${token}` } : {}
       });
@@ -151,7 +150,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
     e.preventDefault();
     if (!newKeyName.trim()) return;
     try {
-      const res = await fetch('/api/api-keys', {
+      const res = await safeFetchJson('/api/api-keys', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -159,9 +158,8 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
         },
         body: JSON.stringify({ name: newKeyName.trim() }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setApiKeys(prev => [data.key, ...prev]);
+      if (res.ok && res.data?.key) {
+        setApiKeys(prev => [res.data.key, ...prev]);
         setNewKeyName('');
         onShowToast('API Key generated successfully!');
       }
@@ -184,7 +182,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
     setIsGeneratingInDash(true);
     try {
       const projectSummary = project.files.map(f => `${f.path}:\n${f.code.slice(0, 400)}`).join('\n\n');
-      const res = await fetch('/api/generate', {
+      const res = await safeFetchJson('/api/generate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -196,12 +194,13 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
         })
       });
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to generate script.');
+      if (!res.ok || !res.data?.script) {
+        throw new Error(res.error || 'Failed to generate script.');
+      }
 
-      setDashGeneratedScript(data.script);
-      setScripts(prev => [data.script, ...prev]);
-      onShowToast(`✓ Generated "${data.script.title}"!`);
+      setDashGeneratedScript(res.data.script);
+      setScripts(prev => [res.data.script, ...prev]);
+      onShowToast(`✓ Generated "${res.data.script.title}"!`);
     } catch (err: any) {
       onShowToast(`❌ ${err.message || 'Generation failed'}`);
     } finally {
@@ -215,7 +214,7 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
 
     setIsDebuggingInDash(true);
     try {
-      const res = await fetch('/api/debug', {
+      const res = await safeFetchJson('/api/debug', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -227,11 +226,12 @@ export const DashboardModal: React.FC<DashboardModalProps> = ({
         })
       });
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to debug error.');
+      if (!res.ok || !res.data?.script) {
+        throw new Error(res.error || 'Failed to debug error.');
+      }
 
-      setDebugFixedScript(data.script);
-      setScripts(prev => [data.script, ...prev]);
+      setDebugFixedScript(res.data.script);
+      setScripts(prev => [res.data.script, ...prev]);
       onShowToast('✓ Analyzed and resolved Roblox runtime error!');
     } catch (err: any) {
       onShowToast(`❌ ${err.message || 'Debugging failed'}`);

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AuthMode, User } from '../types';
 import { X, Mail, Lock, User as UserIcon, AlertCircle, CheckCircle2, RefreshCw, Zap } from 'lucide-react';
+import { safeFetchJson } from '../utils/api';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -34,14 +35,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     try {
       if (mode === 'forgot_password') {
-        const res = await fetch('/api/auth/forgot-password', {
+        const res = await safeFetchJson('/api/auth/forgot-password', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email: email.trim() }),
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Failed to send reset email.');
-        setSuccessInfo(data.message || 'Password reset link sent! Check your inbox.');
+        if (!res.ok) throw new Error(res.error || 'Failed to send reset email.');
+        setSuccessInfo(res.data?.message || 'Password reset link sent! Check your inbox.');
         setIsLoading(false);
         return;
       }
@@ -51,18 +51,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         ? { email: email.trim(), password, name: name.trim() } 
         : { email: email.trim(), password };
 
-      const res = await fetch(endpoint, {
+      const res = await safeFetchJson(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Authentication failed.');
+      if (!res.ok || !res.data) {
+        throw new Error(res.error || 'Authentication failed.');
       }
 
-      onSuccess(data.user, data.token);
+      onSuccess(res.data.user, res.data.token);
       onClose();
     } catch (err: any) {
       setErrorMessage(err.message || 'Something went wrong. Please check your details.');
@@ -75,14 +74,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      const res = await fetch('/api/auth/google-sim', {
+      const res = await safeFetchJson('/api/auth/google-sim', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: 'builder@squeeze.gg' }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Demo login failed.');
-      onSuccess(data.user, data.token);
+      if (!res.ok || !res.data) throw new Error(res.error || 'Demo login failed.');
+      onSuccess(res.data.user, res.data.token);
       onClose();
     } catch (err: any) {
       setErrorMessage(err.message || 'Demo login failed.');

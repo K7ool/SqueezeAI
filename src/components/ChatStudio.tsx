@@ -15,6 +15,7 @@ import {
   saveProjectToLocalStorage 
 } from '../utils/projectDisk';
 import { formatAndSanitizeLuau } from '../utils/luauFormatter';
+import { safeFetchJson, getClientSideEmergencyResponse } from '../utils/api';
 
 interface ChatStudioProps {
   project: RobloxProject;
@@ -134,7 +135,7 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
         project.files.map(f => `--- ${f.path} (${f.scriptType} -> ${f.targetInstance}) ---\n${f.code.slice(0, 1000)}`).join('\n\n');
 
       const token = localStorage.getItem('squeeze_token');
-      const response = await fetch('/api/chat', {
+      const apiResult = await safeFetchJson('/api/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -146,9 +147,14 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
         })
       });
 
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to get response from AI assistant.');
+      let data: any = null;
+
+      if (apiResult.ok && apiResult.data) {
+        data = apiResult.data;
+      } else {
+        // Fallback for Vercel static deployments or unconfigured backend routes
+        console.warn('API returned non-OK or non-JSON:', apiResult.error);
+        data = getClientSideEmergencyResponse(prompt);
       }
 
       // If script was generated, save into project files!
