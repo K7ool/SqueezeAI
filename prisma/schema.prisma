@@ -1,0 +1,135 @@
+// Prisma Schema for Squeeze (Roblox AI Luau Generator)
+// Supports PostgreSQL (Supabase, Neon, AWS RDS, Railway, Render)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum PlanTier {
+  FREE
+  PRO
+  STUDIO
+}
+
+enum SubscriptionStatus {
+  INACTIVE
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  TRIALING
+}
+
+enum ScriptType {
+  SERVER
+  CLIENT
+  MODULE
+}
+
+enum SubscriberStatus {
+  PENDING
+  ACTIVE
+  UNSUBSCRIBED
+}
+
+model User {
+  id               String            @id @default(cuid())
+  email            String            @unique
+  name             String?
+  passwordHash     String?
+  avatar           String?
+  role             String            @default("user") // "user" | "admin"
+  
+  // Plan & Quota Tracking
+  plan             PlanTier          @default(FREE)
+  monthlyLimit     Int               @default(25)     // Free = 25, Pro = 500/unlimited, Studio = unlimited
+  usedGenerations  Int               @default(0)
+  quotaResetDate   DateTime          @default(now())
+  
+  // Stripe Customer
+  stripeCustomerId String?           @unique
+  
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  
+  // Relations
+  subscription     Subscription?
+  scripts          GeneratedScript[]
+  apiKeys          ApiKey[]
+
+  @@map("users")
+}
+
+model Subscription {
+  id                   String             @id @default(cuid())
+  userId               String             @unique
+  user                 User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  stripeSubscriptionId String?            @unique
+  stripePriceId        String?
+  status               SubscriptionStatus @default(INACTIVE)
+  plan                 PlanTier           @default(FREE)
+  currentPeriodStart   DateTime           @default(now())
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd    Boolean            @default(false)
+  
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  @@map("subscriptions")
+}
+
+model GeneratedScript {
+  id             String      @id @default(cuid())
+  userId         String?
+  user           User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  
+  title          String
+  prompt         String      @db.Text
+  code           String      @db.Text
+  explanation    String?     @db.Text
+  scriptType     ScriptType  @default(SERVER)
+  targetInstance String      @default("ServerScriptService") // Where to put in Explorer
+  lineCount      Int         @default(0)
+  tags           String[]    @default([])
+  isFavorite     Boolean     @default(false)
+  
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("generated_scripts")
+}
+
+model EmailSubscriber {
+  id          String           @id @default(cuid())
+  email       String           @unique
+  status      SubscriberStatus @default(ACTIVE)
+  confirmedAt DateTime?        @default(now())
+  source      String           @default("landing_footer")
+  
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@map("email_subscribers")
+}
+
+model ApiKey {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String   @default("Studio Plugin Key")
+  keyHash   String   @unique
+  prefix    String   // e.g. "sqz_live_..."
+  lastUsedAt DateTime?
+  
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("api_keys")
+}

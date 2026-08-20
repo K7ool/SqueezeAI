@@ -1,0 +1,187 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --lemon: #FFC93C;
+    --lemon-deep: #F0A500;
+    --zest: #FFF8E7;
+    --rind: #142019;
+    --rind-2: #1D2E24;
+    --rind-3: #25392C;
+    --coral: #FF6B4A;
+    --ink: #0B120D;
+    --paper: #FFFDF6;
+    --mint: #A8E6B0;
+    --danger: #E85C4A;
+    --line: rgba(255, 255, 255, 0.09);
+    --line-dark: rgba(11, 18, 13, 0.12);
+    --shadow: 0 20px 40px rgba(11, 18, 13, 0.18);
+    --radius: 18px;
+    --display: 'Baloo 2', system-ui, sans-serif;
+    --body: 'Inter', system-ui, sans-serif;
+    --mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  body {
+    font-family: var(--body);
+    background-color: var(--paper);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--display);
+    font-weight: 700;
+    line-height: 1.08;
+  }
+
+  code, pre, .font-mono {
+    font-family: var(--mono);
+  }
+}
+
+/* Custom Utilities */
+.font-display {
+  font-family: 'Baloo 2', system-ui, sans-serif;
+}
+
+.font-body {
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+.font-code {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+/* Squeeze Button with 3D drop depth */
+.btn-squeeze {
+  background-color: var(--lemon);
+  color: var(--ink);
+  box-shadow: 0 5px 0 var(--lemon-deep);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.btn-squeeze:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 7px 0 var(--lemon-deep);
+}
+
+.btn-squeeze:active:not(:disabled) {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 var(--lemon-deep);
+}
+
+.btn-squeeze-dark {
+  background-color: var(--ink);
+  color: var(--paper);
+  box-shadow: 0 5px 0 rgba(0, 0, 0, 0.5);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.btn-squeeze-dark:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 7px 0 rgba(0, 0, 0, 0.6);
+}
+
+.btn-squeeze-dark:active:not(:disabled) {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.4);
+}
+
+/* Receipt Component Styling */
+.receipt-container {
+  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.5);
+  transform: rotate(1deg);
+  transition: transform 0.3s ease;
+}
+
+.receipt-container:hover {
+  transform: rotate(0deg);
+}
+
+.receipt-tape {
+  position: absolute;
+  top: -12px;
+  left: 50%;
+  transform: translateX(-50%) rotate(-2deg);
+  width: 120px;
+  height: 26px;
+  background-color: var(--lemon);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
+  z-index: 10;
+}
+
+/* Syntax Highlighting for Luau code */
+.luau-kw {
+  color: #a8562e;
+  font-weight: 600;
+}
+
+.luau-fn {
+  color: #2a6b47;
+  font-weight: 600;
+}
+
+.luau-str {
+  color: #8a5a1f;
+}
+
+.luau-cm {
+  color: rgba(11, 18, 13, 0.45);
+  font-style: italic;
+}
+
+/* Dark Code Window Highlighting */
+.dark-kw {
+  color: #ff9a76;
+  font-weight: 600;
+}
+
+.dark-fn {
+  color: #a8e6b0;
+  font-weight: 600;
+}
+
+.dark-str {
+  color: #ffc93c;
+}
+
+.dark-cm {
+  color: rgba(255, 253, 246, 0.4);
+  font-style: italic;
+}
+
+/* Pulse animation */
+@keyframes pulse-subtle {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.pulse-dot {
+  animation: pulse-subtle 1.6s ease-in-out infinite;
+}
+
+/* Ticket Serrated Edges */
+.ticket-edge {
+  position: relative;
+}
+
+.ticket-edge::before, .ticket-edge::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 8px;
+  background: radial-gradient(circle at 8px 4px, var(--paper) 4px, transparent 4.5px) repeat-x;
+  background-size: 16px 8px;
+}
+
+.ticket-edge::before {
+  top: -4px;
+}
+
+.ticket-edge::after {
+  bottom: -4px;
+  transform: rotate(180deg);
+}

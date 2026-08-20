@@ -1,0 +1,6 @@
+{
+  "name": "Squeeze",
+  "description": "AI Luau script generator platform for Roblox with live project folder mounting, in-place code editing, multi-chat co-pilot, and interactive mechanic idea flow maps.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
