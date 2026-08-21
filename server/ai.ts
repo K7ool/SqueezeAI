@@ -221,30 +221,38 @@ export async function executeTaskPlan(
   plan: AgentTaskPlan,
   executionId: string
 ): Promise<boolean> {
-  // 1. Create Files
-  for (const file of plan.filesToCreate) {
-    emitExecutionEvent(executionId, { type: 'Create', message: `Creating ${file.path}...`, status: 'running', filePath: file.path });
-    await studio.createScript(projectId, { className: file.className, name: file.path.split('/').pop()!, source: file.source });
-  }
-
-  // 2. Modify Files
-  for (const file of plan.filesToModify) {
-    emitExecutionEvent(executionId, { type: 'Edit', message: `Modifying ${file.path}...`, status: 'running', filePath: file.path });
-    const current = await studio.readScript(projectId, file.path);
-    if (current.success) {
-      // Simple edit placeholder - the model will need to provide the actual updated source
-      // For now, assume the model provides the edit instruction that the next step uses to regenerate
-      await studio.updateScript(projectId, { path: file.path, source: `${current.file.source}\n-- ${file.editInstruction}` });
+  try {
+    // 1. Create Files
+    for (const file of plan.filesToCreate) {
+      emitExecutionEvent(executionId, { type: 'Create', message: `Creating ${file.path}...`, status: 'running', filePath: file.path });
+      const result = await studio.createScript(projectId, { className: file.className as any, name: file.path.split('/').pop()!, source: file.source });
+      if (!result.success) throw new Error(`Failed to create file: ${file.path} - ${result.summary}`);
     }
-  }
 
-  // 3. Create Instances
-  for (const inst of plan.instancesToCreate) {
-    emitExecutionEvent(executionId, { type: 'Create', message: `Creating ${inst.className} "${inst.name}"...`, status: 'running' });
-    await studio.createInstance(projectId, inst);
-  }
+    // 2. Modify Files
+    for (const file of plan.filesToModify) {
+      emitExecutionEvent(executionId, { type: 'Edit', message: `Modifying ${file.path}...`, status: 'running', filePath: file.path });
+      const current = await studio.readScript(projectId, file.path);
+      if (current.success) {
+        const updateResult = await studio.updateScript(projectId, { path: file.path, source: `${current.file.source}\n-- ${file.editInstruction}` });
+        if (!updateResult.success) throw new Error(`Failed to modify file: ${file.path} - ${updateResult.summary}`);
+      } else {
+        throw new Error(`Failed to read file for modification: ${file.path}`);
+      }
+    }
 
-  return true;
+    // 3. Create Instances
+    for (const inst of plan.instancesToCreate) {
+      emitExecutionEvent(executionId, { type: 'Create', message: `Creating ${inst.className} "${inst.name}"...`, status: 'running' });
+      const instResult = await studio.createInstance(projectId, inst as any);
+      if (!instResult.success) throw new Error(`Failed to create instance: ${inst.name} - ${instResult.summary}`);
+    }
+
+    return true;
+  } catch (error: any) {
+    emitExecutionEvent(executionId, { type: 'Error', message: `Execution failed: ${error.message}`, status: 'failed' });
+    throw error;
+  }
 }
 
 /**

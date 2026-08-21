@@ -733,9 +733,10 @@ export function createExpressApp() {
       }
 
       // Sync if files exist
+      let studioSyncResult: any = null;
       if (filesToSync.length > 0) {
         emitExecutionEvent(executionId, { type: 'Research', message: `Syncing ${filesToSync.length} file(s) to Studio...`, status: 'running' });
-        const studioSyncResult = await executeStudioPublish(projectId, filesToSync);
+        studioSyncResult = await executeStudioPublish(projectId, filesToSync);
         
         if (studioSyncResult.success) {
           emitExecutionEvent(executionId, {
