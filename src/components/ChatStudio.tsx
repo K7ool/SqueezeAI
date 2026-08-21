@@ -1,12 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   Send, RefreshCw, Cpu, MessageSquare, Plus, Trash2, ChevronDown, ChevronRight, CheckCircle2,
-  FileCode, Play, AlertTriangle, Layers, Code2
+  FileCode, Play, AlertTriangle, Layers, Code2, Brain, Search
 } from 'lucide-react';
 import { User, UserQuota } from '../types';
 import { RobloxProject, ChatSession, ChatMessage, GeneratedFilePayload, ThinkingStep } from '../types/project';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { LuauCodeViewer } from './LuauCodeViewer';
+import { AgentMemoryModal } from './AgentMemoryModal';
 import { safeFetchJson, getClientSideEmergencyResponse } from '../utils/api';
 
 interface ChatStudioProps {
@@ -34,14 +35,45 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
   const [inputText, setInputText] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [expandedCodeForMsg, setExpandedCodeForMsg] = useState<Record<string, boolean>>({});
+  const [chatSearchQuery, setChatSearchQuery] = useState('');
+  const [isMemoryModalOpen, setIsMemoryModalOpen] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [sessions, isSending, expandedCodeForMsg]);
 
   useEffect(() => {
+    loadConversationsFromBackend();
+  }, [project.id]);
+
+  const loadConversationsFromBackend = async () => {
+    try {
+      const token = localStorage.getItem('squeeze_token');
+      const res = await safeFetchJson(`/api/conversations?projectId=${project.id}`, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
+
+      if (res.ok && res.data?.success && Array.isArray(res.data.conversations) && res.data.conversations.length > 0) {
+        const loadedSessions: ChatSession[] = res.data.conversations.map((c: any) => ({
+          id: c.id,
+          name: c.title,
+          createdAt: new Date(c.createdAt).getTime(),
+          updatedAt: new Date(c.updatedAt).getTime(),
+          messages: []
+        }));
+
+        setSessions(loadedSessions);
+        const targetId = loadedSessions[0].id;
+        setActiveSessionId(targetId);
+        fetchMessagesForConversation(targetId);
+        return;
+      }
+    } catch (err) {
+      console.warn("Backend conversation fetch offline, falling back to local storage:", err);
+    }
+
     const saved = localStorage.getItem(`squeeze_chat_sessions_${project.id}`);
     if (saved) {
       try {
@@ -54,7 +86,31 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
       } catch (e) {}
     }
     handleCreateNewChat();
-  }, [project.id]);
+  };
+
+  const fetchMessagesForConversation = async (convId: string) => {
+    try {
+      const res = await safeFetchJson(`/api/conversations/${convId}/messages`);
+      if (res.ok && res.data?.success && Array.isArray(res.data.messages) && res.data.messages.length > 0) {
+        const msgs: ChatMessage[] = res.data.messages.map((m: any) => ({
+          id: m.id,
+          role: m.role as 'user' | 'assistant',
+          content: m.content,
+          timestamp: new Date(m.timestamp).getTime(),
+          thinkingSteps: m.thinkingSteps,
+          changePlan: m.changePlan,
+          codeReview: m.codeReview,
+          actionPerformed: m.actionPerformed,
+          filesGenerated: m.filesGenerated,
+          suggestedPrompts: m.suggestedPrompts
+        }));
+
+        setSessions(prev => prev.map(s => s.id === convId ? { ...s, messages: msgs } : s));
+      }
+    } catch (err) {
+      console.warn("Failed to fetch messages for conversation:", err);
+    }
+  };
 
   const activeSession = sessions.find(s => s.id === activeSessionId) || sessions[0];
 
@@ -62,7 +118,47 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
     localStorage.setItem(`squeeze_chat_sessions_${project.id}`, JSON.stringify(updated));
   };
 
-  const handleCreateNewChat = () => {
+  const handleCreateNewChat = async () => {
+    try {
+      const token = localStorage.getItem('squeeze_token');
+      const res = await safeFetchJson('/api/conversations', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({
+          title: 'New Roblox System',
+          projectId: project.id
+        })
+      });
+
+      if (res.ok && res.data?.success && res.data.conversation) {
+        const newConv = res.data.conversation;
+        const newSession: ChatSession = {
+          id: newConv.id,
+          name: newConv.title,
+          createdAt: new Date(newConv.createdAt).getTime(),
+          updatedAt: new Date(newConv.updatedAt).getTime(),
+          messages: [
+            {
+              id: `welcome-${Date.now()}`,
+              role: 'assistant',
+              content: `Hey! I'm **Squeeze**, your Elite Roblox Luau Engineer & Architect. I have full visibility over your project (**${project.name}**) with **${project.files.length} scripts** loaded.\n\nTell me what you want to build, and I will execute it directly in Studio.`,
+              timestamp: Date.now()
+            }
+          ]
+        };
+        const updated = [newSession, ...sessions];
+        setSessions(updated);
+        setActiveSessionId(newSession.id);
+        saveChatSessionsToStorage(updated);
+        return;
+      }
+    } catch (err) {
+      console.warn("Offline conversation creation fallback:", err);
+    }
+
     const newSession: ChatSession = {
       id: `chat-${Date.now()}`,
       name: 'New Conversation',
@@ -83,7 +179,7 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
     saveChatSessionsToStorage(updated);
   };
 
-  const handleDeleteChat = (sessionId: string, e: React.MouseEvent) => {
+  const handleDeleteChat = async (sessionId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (sessions.length <= 1) {
       onShowToast('Cannot delete the last chat session.');
@@ -95,6 +191,11 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
       setActiveSessionId(filtered[0].id);
     }
     saveChatSessionsToStorage(filtered);
+
+    try {
+      await safeFetchJson(`/api/conversations/${sessionId}`, { method: 'DELETE' });
+    } catch (err) {}
+
     onShowToast('Chat session deleted.');
   };
 
@@ -137,7 +238,6 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
     setIsSending(true);
 
     try {
-      // Build high-density project context
       const projectContext = `Current Roblox Project: "${project.name}"\nTotal Scripts: ${project.files.length}`;
       const token = localStorage.getItem('squeeze_token');
 
@@ -148,6 +248,8 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
           ...(token ? { 'Authorization': `Bearer ${token}` } : {})
         },
         body: JSON.stringify({
+          conversationId: activeSessionId,
+          projectId: project.id,
           messages: currentMessages.map(m => ({ role: m.role, content: m.content })),
           projectContext,
           projectFiles: project.files.map(f => ({
@@ -180,7 +282,6 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
         filesGenerated: data.filesGenerated,
         generatedScript: data.generatedScript,
         suggestedPrompts: data.suggestedPrompts,
-        // Hack: append operationResults to the message to show in UI
         modifiedFiles: data.operationResults ? data.operationResults.map((op: any) => ({
            path: op.operation,
            name: op.result?.success ? 'Success' : 'Failed',
@@ -202,9 +303,7 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
       setSessions(finalSessions);
       saveChatSessionsToStorage(finalSessions);
       
-      // If we got files back, update the project context implicitly to reflect changes.
       if (data.studioSyncResult && data.studioSyncResult.success) {
-         // Optionally re-fetch project files here, or rely on auto-sync polling
          onShowToast('✓ Changes synced to Studio');
       }
 
@@ -235,35 +334,74 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
     setExpandedCodeForMsg(prev => ({ ...prev, [msgId]: !prev[msgId] }));
   };
 
+  const filteredSessions = sessions.filter(s => 
+    !chatSearchQuery.trim() || s.name.toLowerCase().includes(chatSearchQuery.toLowerCase())
+  );
+
   return (
     <div className="flex h-full w-full bg-[#0B120D] text-white">
+      {/* Agent Memory Manager Modal */}
+      <AgentMemoryModal
+        isOpen={isMemoryModalOpen}
+        onClose={() => setIsMemoryModalOpen(false)}
+        projectId={project.id}
+        projectName={project.name}
+        onShowToast={onShowToast}
+      />
+
       {/* Sessions Sidebar */}
       <div className="w-64 border-r border-white/10 flex flex-col bg-[#0D1117]">
-        <div className="p-4 border-b border-white/10 flex justify-between items-center">
-          <span className="font-bold text-xs uppercase tracking-wider text-white/50">Chats</span>
+        <div className="p-3 border-b border-white/10 flex items-center justify-between gap-2">
           <button 
             onClick={handleCreateNewChat}
-            className="p-1.5 bg-[#FFC93C]/10 text-[#FFC93C] rounded hover:bg-[#FFC93C]/20 transition-all"
+            className="flex-1 py-1.5 px-3 bg-[#FFC93C] text-[#0B120D] font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 hover:bg-[#ffe082] transition-colors"
           >
             <Plus className="w-4 h-4" />
+            New Session
+          </button>
+          
+          <button
+            onClick={() => setIsMemoryModalOpen(true)}
+            className="p-1.5 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 rounded-xl transition-all"
+            title="Open Agent Persistent Memory Engine"
+          >
+            <Brain className="w-4 h-4 animate-pulse" />
           </button>
         </div>
+
+        {/* Conversation Search Bar */}
+        <div className="px-3 pt-2 pb-1">
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
+            <input
+              type="text"
+              placeholder="Search chats..."
+              value={chatSearchQuery}
+              onChange={(e) => setChatSearchQuery(e.target.value)}
+              className="w-full bg-[#080d1a] border border-slate-800 text-xs text-white rounded-lg pl-8 pr-2 py-1 focus:border-cyan-400 outline-none font-mono"
+            />
+          </div>
+        </div>
+
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
-          {sessions.map(s => (
+          {filteredSessions.map(s => (
             <div 
               key={s.id}
-              onClick={() => setActiveSessionId(s.id)}
+              onClick={() => {
+                setActiveSessionId(s.id);
+                fetchMessagesForConversation(s.id);
+              }}
               className={`p-3 rounded-xl cursor-pointer text-sm flex justify-between items-center group transition-all ${
-                activeSessionId === s.id ? 'bg-white/10 text-white' : 'text-white/60 hover:bg-white/5'
+                activeSessionId === s.id ? 'bg-white/10 text-white font-medium border-l-2 border-[#FFC93C]' : 'text-white/60 hover:bg-white/5'
               }`}
             >
               <div className="flex items-center gap-3 overflow-hidden">
-                <MessageSquare className="w-4 h-4 shrink-0 opacity-50" />
-                <span className="truncate">{s.name}</span>
+                <MessageSquare className="w-4 h-4 shrink-0 opacity-50 text-cyan-400" />
+                <span className="truncate text-xs">{s.name}</span>
               </div>
               <button 
                 onClick={(e) => handleDeleteChat(s.id, e)}
-                className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-400"
+                className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-400 transition"
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>

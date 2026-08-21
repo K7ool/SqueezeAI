@@ -21,6 +21,7 @@ import { createCheckoutSession, handleStripeWebhook, PLANS } from './stripe.js';
 import { studioWebSync } from './studioWebSync.js';
 import { OFFICIAL_ROBLOX_STUDIO_PLUGIN_SOURCE } from './robloxStudioPluginSource.js';
 import { executeStudioPublish, executeStudioOperation } from './agentStudioTool.js';
+import { searchMemories, buildAgentContext } from './memoryService.js';
 
 export function createExpressApp() {
   const app = express();
@@ -305,34 +306,323 @@ export function createExpressApp() {
     }
   });
 
-  // AI Chat with Project Assistant (Studio-First Execution Engine)
+  // -------------------------------------------------------------
+  // PERSISTENT CONVERSATIONS API
+  // -------------------------------------------------------------
+
+  app.get('/api/conversations', optionalAuthMiddleware, (req: AuthenticatedRequest, res) => {
+    try {
+      const userId = req.user?.id || 'usr_demo_builder';
+      const projectId = (req.query.projectId as string) || 'prj_default_roblox';
+      const search = req.query.search as string;
+
+      const conversations = db.getConversations(userId, projectId, search);
+      res.json({ success: true, conversations });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to list conversations' });
+    }
+  });
+
+  app.post('/api/conversations', optionalAuthMiddleware, (req: AuthenticatedRequest, res) => {
+    try {
+      const userId = req.user?.id || 'usr_demo_builder';
+      const { title, projectId } = req.body;
+
+      const conv = db.createConversation({
+        userId,
+        projectId: projectId || 'prj_default_roblox',
+        title: title || 'New Roblox System'
+      });
+
+      res.json({ success: true, conversation: conv });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to create conversation' });
+    }
+  });
+
+  app.get('/api/conversations/:id', optionalAuthMiddleware, (req: AuthenticatedRequest, res) => {
+    try {
+      const { id } = req.params;
+      const conversation = db.getConversation(id);
+      if (!conversation) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      const limit = parseInt(req.query.limit as string) || 100;
+      const offset = parseInt(req.query.offset as string) || 0;
+      const messages = db.getMessages(id, limit, offset);
+
+      res.json({ success: true, conversation, messages });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch conversation' });
+    }
+  });
+
+  app.patch('/api/conversations/:id', optionalAuthMiddleware, (req: AuthenticatedRequest, res) => {
+    try {
+      const { id } = req.params;
+      const { title, archived } = req.body;
+
+      const updated = db.updateConversation(id, { title, archived });
+      if (!updated) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      res.json({ success: true, conversation: updated });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to update conversation' });
+    }
+  });
+
+  app.delete('/api/conversations/:id', optionalAuthMiddleware, (req: AuthenticatedRequest, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user?.id || 'usr_demo_builder';
+      const deleted = db.deleteConversation(id, userId);
+      res.json({ success: deleted });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to delete conversation' });
+    }
+  });
+
+  app.get('/api/conversations/:id/messages', optionalAuthMiddleware, (req: AuthenticatedRequest, res) => {
+    try {
+      const { id } = req.params;
+      const messages = db.getMessages(id);
+      res.json({ success: true, messages });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch messages' });
+    }
+  });
+
+  // -------------------------------------------------------------
+  // PERSISTENT MEMORY ARCHITECTURE ENDPOINTS
+  // -------------------------------------------------------------
+
+  app.get('/api/memory', optionalAuthMiddleware, (req: AuthenticatedRequest, res) => {
+    try {
+      const userId = req.user?.id || 'usr_demo_builder';
+      const projectId = (req.query.projectId as string) || 'prj_default_roblox';
+
+      const userMems = db.getUserMemories(userId);
+      const prjMem = db.getProjectMemory(userId, projectId);
+      const recentExecs = db.getRecentExecutions(userId, projectId, 10);
+      const recentErrs = db.getRecentErrors(userId, projectId, 10);
+      const memoryEvents = db.getMemoryEvents(userId, 20);
+
+      res.json({
+        success: true,
+        memory: {
+          userPreferences: userMems,
+          projectMemory: prjMem,
+          recentExecutions: recentExecs,
+          recentErrors: recentErrs,
+          memoryEvents
+        }
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch memory overview' });
+    }
+  });
+
+  app.get('/api/memory/search', optionalAuthMiddleware, (req: AuthenticatedRequest, res) => {
+    try {
+      const userId = req.user?.id || 'usr_demo_builder';
+      const query = (req.query.q as string) || '';
+      const projectId = (req.query.projectId as string) || 'prj_default_roblox';
+
+      const results = searchMemories(userId, query, projectId);
+      res.json({ success: true, ...results });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to search memory' });
+    }
+  });
+
+  app.post('/api/memory/user', optionalAuthMiddleware, (req: AuthenticatedRequest, res) => {
+    try {
+      const userId = req.user?.id || 'usr_demo_builder';
+      const { key, value, type, confidence, source } = req.body;
+
+      if (!key || value === undefined) {
+        return res.status(400).json({ error: 'key and value are required' });
+      }
+
+      const mem = db.saveUserMemory({
+        userId,
+        type: type || 'custom_preference',
+        key,
+        value,
+        confidence: confidence || 'high',
+        source: source || 'user_explicit'
+      });
+
+      db.logMemoryEvent({
+        userId,
+        projectId: 'prj_default_roblox',
+        memoryType: 'user',
+        action: 'created',
+        key,
+        details: `Set user preference: ${key} = ${JSON.stringify(value)}`
+      });
+
+      res.json({ success: true, memory: mem });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to save user memory' });
+    }
+  });
+
+  app.delete('/api/memory/user/:key', optionalAuthMiddleware, (req: AuthenticatedRequest, res) => {
+    try {
+      const userId = req.user?.id || 'usr_demo_builder';
+      const { key } = req.params;
+
+      const deleted = db.deleteUserMemory(userId, key);
+      db.logMemoryEvent({
+        userId,
+        projectId: 'prj_default_roblox',
+        memoryType: 'user',
+        action: 'deleted',
+        key,
+        details: `Deleted user preference: ${key}`
+      });
+
+      res.json({ success: deleted });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to delete user memory' });
+    }
+  });
+
+  app.post('/api/memory/project', optionalAuthMiddleware, (req: AuthenticatedRequest, res) => {
+    try {
+      const userId = req.user?.id || 'usr_demo_builder';
+      const projectId = req.body.projectId || 'prj_default_roblox';
+
+      const updated = db.saveProjectMemory({
+        userId,
+        projectId,
+        ...req.body
+      });
+
+      db.logMemoryEvent({
+        userId,
+        projectId,
+        memoryType: 'project',
+        action: 'updated',
+        details: 'Updated project memory parameters'
+      });
+
+      res.json({ success: true, projectMemory: updated });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to save project memory' });
+    }
+  });
+
+  app.post('/api/memory/clear', optionalAuthMiddleware, (req: AuthenticatedRequest, res) => {
+    try {
+      const userId = req.user?.id || 'usr_demo_builder';
+      const projectId = req.body.projectId || 'prj_default_roblox';
+      const scope = req.body.scope || 'all';
+
+      if (scope === 'user' || scope === 'all') {
+        const userMems = db.getUserMemories(userId);
+        userMems.forEach(m => db.deleteUserMemory(userId, m.key));
+      }
+
+      db.logMemoryEvent({
+        userId,
+        projectId,
+        memoryType: 'system',
+        action: 'deleted',
+        details: `Cleared memory scope: ${scope}`
+      });
+
+      res.json({ success: true, scopeCleared: scope });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to clear memory' });
+    }
+  });
+
+  app.get('/api/memory/export', optionalAuthMiddleware, (req: AuthenticatedRequest, res) => {
+    try {
+      const userId = req.user?.id || 'usr_demo_builder';
+      const projectId = (req.query.projectId as string) || 'prj_default_roblox';
+
+      const exportData = {
+        exportedAt: new Date().toISOString(),
+        userId,
+        projectId,
+        userMemories: db.getUserMemories(userId),
+        projectMemory: db.getProjectMemory(userId, projectId),
+        conversations: db.getConversations(userId, projectId),
+        recentExecutions: db.getRecentExecutions(userId, projectId, 50),
+        recentErrors: db.getRecentErrors(userId, projectId, 50)
+      };
+
+      res.json({ success: true, export: exportData });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to export memory' });
+    }
+  });
+
+  // AI Chat with Project Assistant (Studio-First Execution Engine & Persistent Memory Integrated)
   app.post('/api/chat', optionalAuthMiddleware, async (req: AuthenticatedRequest, res) => {
     try {
-      const { messages, projectContext, projectFiles } = req.body;
+      const { messages, projectContext, projectFiles, conversationId: inputConvId, projectId: inputProjectId } = req.body;
       if (!messages || !Array.isArray(messages) || messages.length === 0) {
         return res.status(400).json({ error: 'Messages array is required.' });
       }
 
+      const userId = req.user?.id || 'usr_demo_builder';
+      const projectId = inputProjectId || 'prj_default_roblox';
       const lastMsg = messages[messages.length - 1]?.content || '';
       const lastMsgLower = lastMsg.toLowerCase();
+
+      // Ensure conversation exists in DB
+      let conversationId = inputConvId;
+      let convRecord = conversationId ? db.getConversation(conversationId) : null;
+      if (!convRecord) {
+        convRecord = db.createConversation({
+          userId,
+          projectId,
+          title: lastMsg.slice(0, 35) || 'Roblox Chat Session'
+        });
+        conversationId = convRecord.id;
+      }
+
+      // Persist incoming User Message in DB
+      db.createMessage({
+        conversationId,
+        userId,
+        projectId,
+        role: 'user',
+        content: lastMsg
+      });
 
       const isExplanationQuery = /^(what does|explain|how does|tell me about|what is|how do|show an example of)/i.test(lastMsgLower);
       const isExplicitPreview = /^(show me the code before applying|preview code only)/i.test(lastMsgLower);
       const isExecutionRequest = /(create|build|make|add|implement|modify|edit|fix|delete|remove|rename|move|sync|publish|install|apply|command|part|system|script|folder|model|remotetevent)/i.test(lastMsgLower) && !isExplanationQuery;
 
-      const projectId = 'prj_default_roblox';
-
       if (isExecutionRequest && !isExplicitPreview) {
-        // 1. Studio-First: Check connection status BEFORE any action or code generation
+        // Studio-First check
         const syncState = studioWebSync.getProjectSyncState(projectId);
         const isConnected = syncState.session && syncState.session.isOnline && syncState.session.status === 'connected';
 
         if (!isConnected) {
+          const offlineMsg = '❌ ROBLOX STUDIO OFFLINE\n\nThe WebSync Plugin is not currently connected.\n\nNo changes were made.\n\nOpen Roblox Studio and connect the Squeeze WebSync Plugin, then try again.';
+          db.createMessage({
+            conversationId,
+            userId,
+            projectId,
+            role: 'assistant',
+            content: offlineMsg
+          });
+
           return res.json({
             success: false,
+            conversationId,
             error: {
               code: 'STUDIO_OFFLINE',
-              message: '❌ ROBLOX STUDIO OFFLINE\n\nThe WebSync Plugin is not currently connected.\n\nNo changes were made.\n\nOpen Roblox Studio and connect the Squeeze WebSync Plugin, then try again.'
+              message: offlineMsg
             },
             studioConnectionStatus: 'DISCONNECTED',
             summary: 'Studio is offline. No changes were made.'
@@ -340,12 +630,16 @@ export function createExpressApp() {
         }
       }
 
-      const user = req.user;
-      if (user) {
-        db.incrementUserGenerations(user.id);
+      if (req.user) {
+        db.incrementUserGenerations(req.user.id);
       }
 
-      const response = await chatWithProjectAssistant(messages, projectContext || '', projectFiles);
+      // Invoke Agent with options for Persistent Memory Building
+      const response = await chatWithProjectAssistant(messages, projectContext || '', projectFiles, {
+        userId,
+        projectId,
+        conversationId
+      });
 
       // Automatic WebSync execution & verification if files were generated or execution requested
       const wantsPublish = /(publish|sync|push|deploy|apply|install|send to studio)/i.test(lastMsgLower) || isExecutionRequest;
@@ -388,7 +682,26 @@ export function createExpressApp() {
         }
       }
 
-      res.json({ success: true, ...response, studioSyncResult, operationResults });
+      // Persist Assistant Message in DB
+      const assistantMsg = db.createMessage({
+        conversationId,
+        userId,
+        projectId,
+        role: 'assistant',
+        content: response.message || 'Execution complete.',
+        thinkingSteps: response.thinkingSteps,
+        changePlan: response.changePlan,
+        codeReview: response.codeReview,
+        actionPerformed: response.actionPerformed,
+        filesGenerated: response.filesGenerated,
+        suggestedPrompts: response.suggestedPrompts,
+        executionDetails: {
+          studioSyncResult,
+          operationResults
+        }
+      });
+
+      res.json({ success: true, conversationId, messageRecord: assistantMsg, ...response, studioSyncResult, operationResults });
     } catch (err: any) {
       console.error('Error in /api/chat:', err);
       res.status(500).json({ error: err.message || 'Chat assistant encountered an error.' });

@@ -4,6 +4,8 @@ import { ROBLOX_SKILLS_DATABASE, searchRobloxSkills, RobloxSkill } from "./roblo
 import { classifyUserIntent, formatCodeExplanationPrompt, AgentIntent } from "./intentClassifier.js";
 import { studio } from "./agentStudioTool.js";
 import { studioWebSync } from "./studioWebSync.js";
+import { buildAgentContext, extractAndStoreMemories } from "./memoryService.js";
+import { db } from "./db.js";
 
 export { classifyUserIntent };
 export type { AgentIntent };
@@ -1497,10 +1499,18 @@ When a user generates or clicks an idea node in their game map, generate 2 to 3 
 export async function chatWithProjectAssistant(
   messages: { role: string; content: string }[],
   projectContext: string,
-  projectFiles?: ProjectFileInfo[]
+  projectFiles?: ProjectFileInfo[],
+  options?: { userId?: string; projectId?: string; conversationId?: string }
 ): Promise<ChatResponseResult> {
   const apiKey = process.env.GEMINI_API_KEY;
   const lastMessage = messages[messages.length - 1]?.content || "";
+
+  const userId = options?.userId || 'usr_demo_builder';
+  const projectId = options?.projectId || 'prj_default_roblox';
+  const conversationId = options?.conversationId || 'conv_default';
+
+  // Build Persistent Memory Context
+  const memoryContext = buildAgentContext(userId, projectId, conversationId, lastMessage, projectFiles);
 
   // 1. Precise Intent Classification
   const intentResult = classifyUserIntent(lastMessage, projectFiles);
@@ -1833,7 +1843,9 @@ ABSOLUTE SPECIFICATION RULES:
       promptContent = formatCodeExplanationPrompt(lastMessage, lastMessage, rankedContext);
     }
 
-    const conversationPrompt = `ROBLOX ENGINE SKILLS & KNOWLEDGE BASE SEARCH CONTEXT:
+    const conversationPrompt = `${memoryContext.formattedContextPrompt}
+
+ROBLOX ENGINE SKILLS & KNOWLEDGE BASE SEARCH CONTEXT:
 ${skillsContext || "General Roblox Engine APIs and Luau 5.1 / 2.0 specifications."}
 
 USER PROJECT CONTEXT & RANKED CODEBASE:
@@ -2031,6 +2043,26 @@ Directly provide ONLY the appropriate response for intent [${intentResult.intent
           { stage: "Reviewing Code", details: "Validated against anti-exploit rules and Roblox Engine APIs.", completed: true, durationMs: 80 },
           { stage: "Completed", details: "Ready.", completed: true, durationMs: 15 },
         ];
+
+    // Extract semantic facts and record execution history in persistent memory
+    try {
+      extractAndStoreMemories(userId, projectId, conversationId, lastMessage, parsed.message);
+      db.saveExecutionMemory({
+        userId,
+        projectId,
+        conversationId,
+        request: lastMessage,
+        intent: intentResult.intent,
+        planSummary: parsed.changePlan?.summary || parsed.actionPerformed?.summary || 'Executed prompt',
+        toolsUsed: skillsFound.map(s => s.title),
+        filesChanged: Array.isArray(parsed.filesGenerated) ? parsed.filesGenerated.map((f: any) => f.filePath) : [],
+        instancesChanged: Array.isArray(parsed.studioOperations) ? parsed.studioOperations.map((o: any) => `${o.parentPath || ''}/${o.name || ''}`) : [],
+        verificationStatus: 'verified',
+        finalStatus: 'success'
+      });
+    } catch (memErr) {
+      console.warn("[Memory Engine] Failed to record execution memory:", memErr);
+    }
 
     return {
       message: parsed.message || "Analysis complete.",

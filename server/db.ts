@@ -155,6 +155,131 @@ export interface StudioAuditLogRecord {
   timestamp: number;
 }
 
+export interface ConversationRecord {
+  id: string;
+  userId: string;
+  projectId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  lastMessageAt: string;
+  messageCount: number;
+  archived: boolean;
+  tags?: string[];
+}
+
+export interface ChatMessageRecord {
+  id: string;
+  conversationId: string;
+  userId: string;
+  projectId: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  timestamp: string;
+  thinkingSteps?: any[];
+  changePlan?: any;
+  codeReview?: any;
+  actionPerformed?: any;
+  filesGenerated?: any[];
+  suggestedPrompts?: string[];
+  executionId?: string;
+  executionDetails?: {
+    status?: string;
+    filesChanged?: string[];
+    instancesChanged?: string[];
+    studioStatus?: string;
+    verificationStatus?: string;
+    studioSyncResult?: any;
+    operationResults?: any;
+  };
+}
+
+export interface UserMemoryRecord {
+  id: string;
+  userId: string;
+  type: 'preference' | 'coding_style' | 'luau_style' | 'architecture' | 'response_style' | 'tool_preference' | 'explicit_statement';
+  key: string;
+  value: any;
+  confidence: 'high' | 'medium' | 'low';
+  source: 'explicit_user_statement' | 'agent_observation' | 'explicit_configuration';
+  createdAt: string;
+  updatedAt: string;
+  version: number;
+}
+
+export interface ProjectMemoryRecord {
+  id: string;
+  userId: string;
+  projectId: string;
+  projectName?: string;
+  gameType?: string;
+  architecture?: string;
+  majorSystems?: string[];
+  services?: string[];
+  frameworks?: string[];
+  dataSystem?: string;
+  UIFramework?: string;
+  commandSystem?: string;
+  permissionSystem?: string;
+  knownProblems?: string[];
+  importantFiles?: string[];
+  learnedConventions?: Record<string, string>;
+  createdAt: string;
+  updatedAt: string;
+  lastVerifiedAt?: string;
+  version: number;
+}
+
+export interface ConversationMemoryRecord {
+  id: string;
+  conversationId: string;
+  userId: string;
+  projectId: string;
+  currentFeature?: string;
+  currentProblem?: string;
+  importantDecisions?: string[];
+  relevantFiles?: string[];
+  recentOperations?: string[];
+  openIssues?: string[];
+  userIntent?: string;
+  updatedAt: string;
+}
+
+export interface ExecutionMemoryRecord {
+  id: string;
+  userId: string;
+  projectId: string;
+  conversationId: string;
+  request: string;
+  intent: string;
+  planSummary?: string;
+  toolsUsed?: string[];
+  filesChanged?: string[];
+  instancesChanged?: string[];
+  errors?: Array<{
+    error: string;
+    file?: string;
+    line?: number;
+    resolved?: boolean;
+    resolution?: string;
+    timestamp?: string;
+  }>;
+  verificationStatus: string;
+  finalStatus: string;
+  timestamp: string;
+}
+
+export interface MemoryEventRecord {
+  id: string;
+  userId: string;
+  projectId?: string;
+  memoryType: 'user' | 'project' | 'conversation' | 'execution' | 'system';
+  action: 'created' | 'updated' | 'verified' | 'invalidated' | 'deleted' | 'reset';
+  key?: string;
+  details: string;
+  timestamp: string;
+}
+
 interface DatabaseSchema {
   users: UserRecord[];
   scripts: GeneratedScriptRecord[];
@@ -167,6 +292,13 @@ interface DatabaseSchema {
   studioFiles: StudioFileVersionRecord[];
   studioConflicts: StudioConflictRecord[];
   studioAuditLogs: StudioAuditLogRecord[];
+  conversations: ConversationRecord[];
+  messages: ChatMessageRecord[];
+  userMemories: UserMemoryRecord[];
+  projectMemories: ProjectMemoryRecord[];
+  conversationMemories: ConversationMemoryRecord[];
+  executionMemories: ExecutionMemoryRecord[];
+  memoryEvents: MemoryEventRecord[];
 }
 
 const DATA_DIR = path.join(process.cwd(), 'data');
@@ -357,6 +489,13 @@ part.Touched:Connect(onTouch)`,
     studioFiles: [],
     studioConflicts: [],
     studioAuditLogs: [],
+    conversations: [],
+    messages: [],
+    userMemories: [],
+    projectMemories: [],
+    conversationMemories: [],
+    executionMemories: [],
+    memoryEvents: [],
   };
 
   try {
@@ -381,6 +520,13 @@ part.Touched:Connect(onTouch)`,
       studioFiles: parsed.studioFiles || [],
       studioConflicts: parsed.studioConflicts || [],
       studioAuditLogs: parsed.studioAuditLogs || [],
+      conversations: parsed.conversations || [],
+      messages: parsed.messages || [],
+      userMemories: parsed.userMemories || [],
+      projectMemories: parsed.projectMemories || [],
+      conversationMemories: parsed.conversationMemories || [],
+      executionMemories: parsed.executionMemories || [],
+      memoryEvents: parsed.memoryEvents || [],
     };
     return memoryDb;
   } catch (err) {
@@ -909,5 +1055,351 @@ export const db = {
     return data.studioAuditLogs
       .filter(l => l.projectId === projectId)
       .slice(0, limit);
+  },
+
+  // -----------------------------------------------------------
+  // CONVERSATIONS & MESSAGES (Persistent Chat Storage)
+  // -----------------------------------------------------------
+  getConversations(userId: string, projectId?: string, search?: string): ConversationRecord[] {
+    const data = ensureDb();
+    let list = data.conversations.filter(c => (c.userId === userId || userId === 'usr_demo_builder') && !c.archived);
+    if (projectId) {
+      list = list.filter(c => c.projectId === projectId);
+    }
+    if (search && search.trim()) {
+      const q = search.toLowerCase().trim();
+      list = list.filter(c => c.title.toLowerCase().includes(q));
+    }
+    return list.sort((a, b) => new Date(b.lastMessageAt || b.createdAt).getTime() - new Date(a.lastMessageAt || a.createdAt).getTime());
+  },
+
+  getConversationById(id: string, userId?: string): ConversationRecord | undefined {
+    const data = ensureDb();
+    const conv = data.conversations.find(c => c.id === id);
+    if (!conv) return undefined;
+    if (userId && conv.userId !== userId && userId !== 'usr_demo_builder') return undefined;
+    return conv;
+  },
+
+  getConversation(id: string, userId?: string): ConversationRecord | undefined {
+    return this.getConversationById(id, userId);
+  },
+
+  createConversation(entry: Omit<ConversationRecord, 'id' | 'createdAt' | 'updatedAt' | 'lastMessageAt' | 'messageCount' | 'archived'>): ConversationRecord {
+    const data = ensureDb();
+    const now = new Date().toISOString();
+    const conv: ConversationRecord = {
+      ...entry,
+      id: 'conv_' + crypto.randomUUID().slice(0, 8),
+      createdAt: now,
+      updatedAt: now,
+      lastMessageAt: now,
+      messageCount: 0,
+      archived: false,
+    };
+    data.conversations.unshift(conv);
+    saveDb(data);
+    return conv;
+  },
+
+  updateConversation(id: string, updates: Partial<ConversationRecord>): ConversationRecord | undefined {
+    const data = ensureDb();
+    const idx = data.conversations.findIndex(c => c.id === id);
+    if (idx === -1) return undefined;
+    data.conversations[idx] = {
+      ...data.conversations[idx],
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    };
+    saveDb(data);
+    return data.conversations[idx];
+  },
+
+  deleteConversation(id: string, userId: string): boolean {
+    const data = ensureDb();
+    const prev = data.conversations.length;
+    data.conversations = data.conversations.filter(c => !(c.id === id && (c.userId === userId || userId === 'usr_demo_builder')));
+    if (data.conversations.length !== prev) {
+      data.messages = data.messages.filter(m => m.conversationId !== id);
+      data.conversationMemories = data.conversationMemories.filter(m => m.conversationId !== id);
+      saveDb(data);
+      return true;
+    }
+    return false;
+  },
+
+  // Chat Messages
+  getMessages(conversationId: string, limit: number = 100, offset: number = 0): ChatMessageRecord[] {
+    const data = ensureDb();
+    const msgs = data.messages
+      .filter(m => m.conversationId === conversationId)
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    return msgs.slice(offset, offset + limit);
+  },
+
+  createMessage(msg: Omit<ChatMessageRecord, 'id' | 'timestamp'>): ChatMessageRecord {
+    const data = ensureDb();
+    const now = new Date().toISOString();
+    const newMsg: ChatMessageRecord = {
+      ...msg,
+      id: 'msg_' + crypto.randomUUID().slice(0, 8),
+      timestamp: now,
+    };
+    data.messages.push(newMsg);
+
+    // Update parent conversation
+    const conv = data.conversations.find(c => c.id === msg.conversationId);
+    if (conv) {
+      conv.messageCount = (conv.messageCount || 0) + 1;
+      conv.lastMessageAt = now;
+      conv.updatedAt = now;
+      if ((!conv.title || conv.title === 'New Chat') && msg.role === 'user') {
+        conv.title = msg.content.slice(0, 45).trim() || 'New Chat';
+      }
+    }
+    saveDb(data);
+    return newMsg;
+  },
+
+  searchMessages(userId: string, query: string, projectId?: string): ChatMessageRecord[] {
+    const data = ensureDb();
+    const q = query.toLowerCase().trim();
+    if (!q) return [];
+    return data.messages.filter(m => {
+      if (m.userId !== userId && userId !== 'usr_demo_builder') return false;
+      if (projectId && m.projectId !== projectId) return false;
+      return m.content.toLowerCase().includes(q);
+    }).slice(0, 30);
+  },
+
+  // -----------------------------------------------------------
+  // AGENT PERSISTENT MEMORY ARCHITECTURE
+  // -----------------------------------------------------------
+
+  // User Memory
+  getUserMemories(userId: string): UserMemoryRecord[] {
+    const data = ensureDb();
+    return data.userMemories.filter(m => m.userId === userId || userId === 'usr_demo_builder');
+  },
+
+  getUserMemoryByKey(userId: string, key: string): UserMemoryRecord | undefined {
+    const data = ensureDb();
+    return data.userMemories.find(m => (m.userId === userId || userId === 'usr_demo_builder') && m.key === key);
+  },
+
+  saveUserMemory(mem: Omit<UserMemoryRecord, 'id' | 'createdAt' | 'updatedAt' | 'version'>): UserMemoryRecord {
+    const data = ensureDb();
+    const now = new Date().toISOString();
+    const existingIdx = data.userMemories.findIndex(m => m.userId === mem.userId && m.key === mem.key);
+
+    let result: UserMemoryRecord;
+    if (existingIdx >= 0) {
+      const existing = data.userMemories[existingIdx];
+      result = {
+        ...existing,
+        ...mem,
+        version: existing.version + 1,
+        updatedAt: now,
+      };
+      data.userMemories[existingIdx] = result;
+    } else {
+      result = {
+        ...mem,
+        id: 'mem_usr_' + crypto.randomUUID().slice(0, 8),
+        version: 1,
+        createdAt: now,
+        updatedAt: now,
+      };
+      data.userMemories.push(result);
+    }
+    saveDb(data);
+    return result;
+  },
+
+  deleteUserMemory(userId: string, keyOrId: string): boolean {
+    const data = ensureDb();
+    const prev = data.userMemories.length;
+    data.userMemories = data.userMemories.filter(m => !(m.userId === userId && (m.key === keyOrId || m.id === keyOrId)));
+    if (data.userMemories.length !== prev) {
+      saveDb(data);
+      return true;
+    }
+    return false;
+  },
+
+  clearUserMemories(userId: string): void {
+    const data = ensureDb();
+    data.userMemories = data.userMemories.filter(m => m.userId !== userId);
+    saveDb(data);
+  },
+
+  // Project Memory
+  getProjectMemory(userId: string, projectId: string): ProjectMemoryRecord | undefined {
+    const data = ensureDb();
+    return data.projectMemories.find(m => m.projectId === projectId && (m.userId === userId || userId === 'usr_demo_builder'));
+  },
+
+  saveProjectMemory(mem: Partial<ProjectMemoryRecord> & { userId: string; projectId: string }): ProjectMemoryRecord {
+    const data = ensureDb();
+    const now = new Date().toISOString();
+    const idx = data.projectMemories.findIndex(m => m.projectId === mem.projectId && m.userId === mem.userId);
+
+    let result: ProjectMemoryRecord;
+    if (idx >= 0) {
+      const existing = data.projectMemories[idx];
+      result = {
+        ...existing,
+        ...mem,
+        version: existing.version + 1,
+        updatedAt: now,
+        lastVerifiedAt: now,
+      };
+      data.projectMemories[idx] = result;
+    } else {
+      result = {
+        userId: mem.userId,
+        projectId: mem.projectId,
+        projectName: mem.projectName || 'Roblox Place',
+        gameType: mem.gameType || 'Roblox Game',
+        architecture: mem.architecture || 'Modular Server-Client Services',
+        majorSystems: mem.majorSystems || [],
+        services: mem.services || [],
+        frameworks: mem.frameworks || [],
+        dataSystem: mem.dataSystem || 'DataStoreService',
+        UIFramework: mem.UIFramework || 'ScreenGui',
+        commandSystem: mem.commandSystem || 'None',
+        permissionSystem: mem.permissionSystem || 'Standard',
+        knownProblems: mem.knownProblems || [],
+        importantFiles: mem.importantFiles || [],
+        learnedConventions: mem.learnedConventions || {},
+        id: 'mem_prj_' + crypto.randomUUID().slice(0, 8),
+        version: 1,
+        createdAt: now,
+        updatedAt: now,
+        lastVerifiedAt: now,
+      };
+      data.projectMemories.push(result);
+    }
+    saveDb(data);
+    return result;
+  },
+
+  deleteProjectMemory(userId: string, projectId: string): boolean {
+    const data = ensureDb();
+    const prev = data.projectMemories.length;
+    data.projectMemories = data.projectMemories.filter(m => !(m.projectId === projectId && m.userId === userId));
+    if (data.projectMemories.length !== prev) {
+      saveDb(data);
+      return true;
+    }
+    return false;
+  },
+
+  // Conversation Memory
+  getConversationMemory(conversationId: string): ConversationMemoryRecord | undefined {
+    const data = ensureDb();
+    return data.conversationMemories.find(m => m.conversationId === conversationId);
+  },
+
+  saveConversationMemory(mem: Partial<ConversationMemoryRecord> & { conversationId: string; userId: string; projectId: string }): ConversationMemoryRecord {
+    const data = ensureDb();
+    const now = new Date().toISOString();
+    const idx = data.conversationMemories.findIndex(m => m.conversationId === mem.conversationId);
+
+    let result: ConversationMemoryRecord;
+    if (idx >= 0) {
+      result = {
+        ...data.conversationMemories[idx],
+        ...mem,
+        updatedAt: now,
+      };
+      data.conversationMemories[idx] = result;
+    } else {
+      result = {
+        id: 'mem_conv_' + crypto.randomUUID().slice(0, 8),
+        conversationId: mem.conversationId,
+        userId: mem.userId,
+        projectId: mem.projectId,
+        currentFeature: mem.currentFeature,
+        currentProblem: mem.currentProblem,
+        importantDecisions: mem.importantDecisions || [],
+        relevantFiles: mem.relevantFiles || [],
+        recentOperations: mem.recentOperations || [],
+        openIssues: mem.openIssues || [],
+        userIntent: mem.userIntent,
+        updatedAt: now,
+      };
+      data.conversationMemories.push(result);
+    }
+    saveDb(data);
+    return result;
+  },
+
+  // Execution & Error Memory
+  saveExecutionMemory(exec: Omit<ExecutionMemoryRecord, 'id' | 'timestamp'>): ExecutionMemoryRecord {
+    const data = ensureDb();
+    const now = new Date().toISOString();
+    const record: ExecutionMemoryRecord = {
+      ...exec,
+      id: 'exec_' + crypto.randomUUID().slice(0, 8),
+      timestamp: now,
+    };
+    data.executionMemories.unshift(record);
+    if (data.executionMemories.length > 200) {
+      data.executionMemories = data.executionMemories.slice(0, 200);
+    }
+    saveDb(data);
+    return record;
+  },
+
+  getRecentExecutions(userId: string, projectId?: string, limit: number = 10): ExecutionMemoryRecord[] {
+    const data = ensureDb();
+    return data.executionMemories
+      .filter(e => (e.userId === userId || userId === 'usr_demo_builder') && (!projectId || e.projectId === projectId))
+      .slice(0, limit);
+  },
+
+  getRecentErrors(userId: string, projectId?: string, limit: number = 10): Array<{
+    error: string;
+    file?: string;
+    line?: number;
+    resolved?: boolean;
+    resolution?: string;
+    timestamp?: string;
+    request?: string;
+  }> {
+    const data = ensureDb();
+    const errorsList: Array<any> = [];
+    const execs = data.executionMemories.filter(e => (e.userId === userId || userId === 'usr_demo_builder') && (!projectId || e.projectId === projectId));
+
+    for (const exec of execs) {
+      if (exec.errors && Array.isArray(exec.errors)) {
+        for (const err of exec.errors) {
+          errorsList.push({ ...err, request: exec.request, timestamp: err.timestamp || exec.timestamp });
+        }
+      }
+    }
+    return errorsList.slice(0, limit);
+  },
+
+  // Memory Event Logging
+  logMemoryEvent(entry: Omit<MemoryEventRecord, 'id' | 'timestamp'>): MemoryEventRecord {
+    const data = ensureDb();
+    const record: MemoryEventRecord = {
+      ...entry,
+      id: 'mevt_' + crypto.randomUUID().slice(0, 8),
+      timestamp: new Date().toISOString(),
+    };
+    data.memoryEvents.unshift(record);
+    if (data.memoryEvents.length > 200) {
+      data.memoryEvents = data.memoryEvents.slice(0, 200);
+    }
+    saveDb(data);
+    return record;
+  },
+
+  getMemoryEvents(userId: string, limit: number = 20): MemoryEventRecord[] {
+    const data = ensureDb();
+    return data.memoryEvents.filter(e => e.userId === userId || userId === 'usr_demo_builder').slice(0, limit);
   }
 };
