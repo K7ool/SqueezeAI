@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Plus } from 'lucide-react';
+import { sound } from '../utils/audio';
 
 export const FaqSection: React.FC = () => {
   const [openIndex, setOpenIndex] = useState<number | null>(0);
@@ -7,7 +8,7 @@ export const FaqSection: React.FC = () => {
   const faqs = [
     {
       q: "Is the code generator on this page actually real?",
-      a: "Yes! The generator on this page connects directly to our server-side AI model (Gemini 3.7 / Claude) with a specialized system prompt for Roblox Luau. It outputs real, commented, and runnable Luau code that you can copy or download directly into your Studio place."
+      a: "Yes! The generator on this page connects directly to our server-side AI model with a specialized system prompt for Roblox Luau. It outputs real, commented, and runnable Luau code that you can copy or download directly into your Studio place."
     },
     {
       q: "Does Squeeze work with an existing place, or only new ones?",
@@ -32,15 +33,16 @@ export const FaqSection: React.FC = () => {
   ];
 
   const toggle = (idx: number) => {
+    sound.click();
     setOpenIndex(openIndex === idx ? null : idx);
   };
 
   return (
-    <section id="faq" className="py-24 bg-[#FFFDF6]">
-      <div className="max-w-[840px] mx-auto px-6">
+    <section id="faq" className="py-20 sm:py-24 bg-[#FFFDF6]">
+      <div className="max-w-[840px] mx-auto px-4 sm:px-6">
         
         {/* Section Header */}
-        <div className="mb-12">
+        <div className="mb-10 sm:mb-12">
           <span className="font-mono text-xs uppercase font-bold tracking-widest text-[#FF6B4A]">
             Before you ask
           </span>
@@ -61,14 +63,14 @@ export const FaqSection: React.FC = () => {
                 >
                   <span>{faq.q}</span>
                   <span className={`w-6 h-6 flex items-center justify-center font-mono text-xl text-[#FF6B4A] transition-transform duration-200 shrink-0 ml-4 ${
-                    isOpen ? 'rotate-45' : ''
+                    isOpen ? 'rotate-45 text-[#0B120D]' : ''
                   }`}>
                     +
                   </span>
                 </button>
 
                 {isOpen && (
-                  <div className="mt-3.5 text-sm sm:text-[15px] leading-relaxed text-[#0B120D]/70 font-body">
+                  <div className="mt-3.5 text-sm sm:text-[15px] leading-relaxed text-[#0B120D]/70 font-body animate-in fade-in slide-in-from-top-1 duration-200">
                     {faq.a}
                   </div>
                 )}
@@ -81,3 +83,4 @@ export const FaqSection: React.FC = () => {
     </section>
   );
 };
+

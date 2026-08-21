@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Mail, CheckCircle2, RefreshCw, AlertCircle } from 'lucide-react';
 import { safeFetchJson } from '../utils/api';
+import { sound } from '../utils/audio';
 
 export const NewsletterSection: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -12,6 +13,7 @@ export const NewsletterSection: React.FC = () => {
     e.preventDefault();
     if (!email || !email.includes('@') || isLoading) return;
 
+    sound.zap();
     setIsLoading(true);
     setErrorMessage(null);
 
@@ -26,9 +28,11 @@ export const NewsletterSection: React.FC = () => {
         throw new Error(res.error || 'Failed to subscribe.');
       }
 
+      sound.success();
       setSuccessMessage(res.data?.message || `✓ You're registered! We'll send updates to ${email}.`);
       setEmail('');
     } catch (err: any) {
+      sound.error();
       setErrorMessage(err.message || 'Subscription failed. Try again.');
     } finally {
       setIsLoading(false);
@@ -53,7 +57,7 @@ export const NewsletterSection: React.FC = () => {
           </p>
 
           {successMessage ? (
-            <div className="mt-6 p-4 rounded-2xl bg-[#A8E6B0]/20 border border-[#A8E6B0]/40 text-[#2A6B47] text-xs font-mono font-bold flex items-center justify-center gap-2">
+            <div className="mt-6 p-4 rounded-2xl bg-[#A8E6B0]/20 border border-[#A8E6B0]/40 text-[#2A6B47] text-xs font-mono font-bold flex items-center justify-center gap-2 animate-in zoom-in-95 duration-200">
               <CheckCircle2 className="w-4 h-4 shrink-0" />
               <span>{successMessage}</span>
             </div>
@@ -71,7 +75,7 @@ export const NewsletterSection: React.FC = () => {
                 <button
                   type="submit"
                   disabled={isLoading || !email}
-                  className="btn-squeeze font-bold text-sm px-6 py-3 rounded-full cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2 shrink-0"
+                  className="btn-squeeze font-bold text-sm px-6 py-3 rounded-full cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2 shrink-0 active:scale-95"
                 >
                   {isLoading ? (
                     <RefreshCw className="w-4 h-4 animate-spin" />
@@ -82,7 +86,7 @@ export const NewsletterSection: React.FC = () => {
               </div>
 
               {errorMessage && (
-                <div className="mt-3 text-xs font-mono text-[#E85C4A] flex items-center justify-center gap-1.5">
+                <div className="mt-3 text-xs font-mono text-[#E85C4A] flex items-center justify-center gap-1.5 animate-in fade-in">
                   <AlertCircle className="w-3.5 h-3.5" />
                   <span>{errorMessage}</span>
                 </div>
@@ -99,3 +103,4 @@ export const NewsletterSection: React.FC = () => {
     </section>
   );
 };
+

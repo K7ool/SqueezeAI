@@ -13,6 +13,7 @@ import {
   loadProjectFromJsonFile, 
   saveProjectToLocalStorage 
 } from '../utils/projectDisk';
+import { sound } from '../utils/audio';
 
 interface ProjectWorkspaceModalProps {
   isOpen: boolean;
@@ -48,6 +49,7 @@ export const ProjectWorkspaceModal: React.FC<ProjectWorkspaceModalProps> = ({
   if (!isOpen) return null;
 
   const handleSelectFile = (fileId: string) => {
+    sound.pop();
     // Save current active file changes if edited
     if (activeFile && isEditingCode) {
       saveCurrentFileCode();
@@ -58,6 +60,7 @@ export const ProjectWorkspaceModal: React.FC<ProjectWorkspaceModalProps> = ({
 
   const saveCurrentFileCode = () => {
     if (!activeFile) return;
+    sound.success();
     const updatedFiles = project.files.map(f => {
       if (f.id === activeFile.id) {
         return {
@@ -84,6 +87,7 @@ export const ProjectWorkspaceModal: React.FC<ProjectWorkspaceModalProps> = ({
     e.preventDefault();
     if (!newFileName.trim()) return;
 
+    sound.success();
     let ext = '.server.luau';
     let defaultPath = 'src/server/';
     let target = 'ServerScriptService';
@@ -130,9 +134,11 @@ export const ProjectWorkspaceModal: React.FC<ProjectWorkspaceModalProps> = ({
 
   const handleDeleteFile = (fileId: string) => {
     if (project.files.length <= 1) {
+      sound.error();
       onShowToast('Cannot delete the only remaining file in project.');
       return;
     }
+    sound.click();
     const updatedFiles = project.files.filter(f => f.id !== fileId);
     const nextActive = updatedFiles[0]?.id || '';
     const updated = {
@@ -148,15 +154,18 @@ export const ProjectWorkspaceModal: React.FC<ProjectWorkspaceModalProps> = ({
   };
 
   const handleExportZip = async () => {
+    sound.zap();
     setIsExporting(true);
     try {
       if (isEditingCode) {
         saveCurrentFileCode();
       }
       await exportProjectToZip(project);
+      sound.success();
       onShowToast(`Exported "${project.name}" Studio ZIP to local disk! 📦`);
     } catch (err) {
       console.error('Export error:', err);
+      sound.error();
       onShowToast('Failed to export ZIP.');
     } finally {
       setIsExporting(false);
@@ -166,12 +175,15 @@ export const ProjectWorkspaceModal: React.FC<ProjectWorkspaceModalProps> = ({
   const handleSaveActiveToDisk = async () => {
     if (!activeFile) return;
     try {
+      sound.click();
       const res = await saveSingleScriptToDisk(activeFile.name, currentCode);
       if (res.success) {
+        sound.success();
         onShowToast(`Saved "${res.filename}" to local disk.`);
       }
     } catch (err) {
       console.error('Save to disk error:', err);
+      sound.error();
     }
   };
 
@@ -179,6 +191,7 @@ export const ProjectWorkspaceModal: React.FC<ProjectWorkspaceModalProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
+    sound.whoosh();
     loadProjectFromJsonFile(file)
       .then(loaded => {
         onUpdateProject(loaded);
@@ -186,9 +199,11 @@ export const ProjectWorkspaceModal: React.FC<ProjectWorkspaceModalProps> = ({
         if (loaded.files[0]) {
           setActiveFileId(loaded.files[0].id);
         }
+        sound.success();
         onShowToast(`Imported project "${loaded.name}" from disk! 📂`);
       })
       .catch(err => {
+        sound.error();
         onShowToast(`Failed to load project: ${err.message}`);
       });
   };
@@ -220,7 +235,7 @@ export const ProjectWorkspaceModal: React.FC<ProjectWorkspaceModalProps> = ({
             {/* Save Active to Disk */}
             <button
               onClick={handleSaveActiveToDisk}
-              className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-[#FFFDF6] text-xs font-mono font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+              className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 active:scale-95 text-[#FFFDF6] text-xs font-mono font-bold transition-all flex items-center gap-1.5 cursor-pointer"
               title="Save active script to local disk (.luau)"
             >
               <Save className="w-3.5 h-3.5 text-[#FFC93C]" />
@@ -231,7 +246,7 @@ export const ProjectWorkspaceModal: React.FC<ProjectWorkspaceModalProps> = ({
             <button
               onClick={handleExportZip}
               disabled={isExporting}
-              className="btn-squeeze px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+              className="btn-squeeze px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer active:scale-95"
               title="Export complete Studio/Rojo project as ZIP archive"
             >
               {isExporting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
@@ -239,7 +254,7 @@ export const ProjectWorkspaceModal: React.FC<ProjectWorkspaceModalProps> = ({
             </button>
 
             {/* Import Project File */}
-            <label className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-[#FFFDF6]/80 text-xs font-mono font-semibold transition-all flex items-center gap-1.5 cursor-pointer">
+            <label className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-[#FFFDF6]/80 text-xs font-mono font-semibold transition-all flex items-center gap-1.5 cursor-pointer active:scale-95">
               <Upload className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Import</span>
               <input type="file" accept=".json" onChange={handleImportProject} className="hidden" />
@@ -247,8 +262,11 @@ export const ProjectWorkspaceModal: React.FC<ProjectWorkspaceModalProps> = ({
 
             {/* Close Button */}
             <button
-              onClick={onClose}
-              className="p-2 rounded-xl bg-white/5 hover:bg-white/15 text-[#FFFDF6]/70 hover:text-[#FFFDF6] transition-colors cursor-pointer ml-2"
+              onClick={() => {
+                sound.click();
+                onClose();
+              }}
+              className="p-2 rounded-xl bg-white/5 hover:bg-white/15 active:scale-95 text-[#FFFDF6]/70 hover:text-[#FFFDF6] transition-colors cursor-pointer ml-2"
             >
               <X className="w-5 h-5" />
             </button>
@@ -266,8 +284,11 @@ export const ProjectWorkspaceModal: React.FC<ProjectWorkspaceModalProps> = ({
                 Explorer
               </span>
               <button
-                onClick={() => setIsAddingFile(!isAddingFile)}
-                className="p-1 rounded-lg bg-white/10 hover:bg-[#FFC93C] hover:text-[#0B120D] text-[#FFFDF6] transition-all cursor-pointer"
+                onClick={() => {
+                  sound.click();
+                  setIsAddingFile(!isAddingFile);
+                }}
+                className="p-1 rounded-lg bg-white/10 hover:bg-[#FFC93C] hover:text-[#0B120D] active:scale-95 text-[#FFFDF6] transition-all cursor-pointer"
                 title="Add new script to project"
               >
                 <Plus className="w-3.5 h-3.5" />
@@ -276,7 +297,7 @@ export const ProjectWorkspaceModal: React.FC<ProjectWorkspaceModalProps> = ({
 
             {/* New File Creation Form */}
             {isAddingFile && (
-              <form onSubmit={handleCreateFile} className="p-3 bg-[#1D2E24] border-b border-white/10 space-y-2">
+              <form onSubmit={handleCreateFile} className="p-3 bg-[#1D2E24] border-b border-white/10 space-y-2 animate-in fade-in">
                 <input
                   type="text"
                   value={newFileName}
@@ -297,14 +318,14 @@ export const ProjectWorkspaceModal: React.FC<ProjectWorkspaceModalProps> = ({
                 <div className="flex gap-2">
                   <button
                     type="submit"
-                    className="flex-1 btn-squeeze py-1 text-xs font-bold rounded-lg"
+                    className="flex-1 btn-squeeze py-1 text-xs font-bold rounded-lg active:scale-95"
                   >
                     Add
                   </button>
                   <button
                     type="button"
                     onClick={() => setIsAddingFile(false)}
-                    className="px-2.5 py-1 bg-white/10 text-xs font-semibold rounded-lg text-[#FFFDF6]"
+                    className="px-2.5 py-1 bg-white/10 text-xs font-semibold rounded-lg text-[#FFFDF6] active:scale-95"
                   >
                     Cancel
                   </button>
@@ -324,7 +345,7 @@ export const ProjectWorkspaceModal: React.FC<ProjectWorkspaceModalProps> = ({
                   <div
                     key={file.id}
                     onClick={() => handleSelectFile(file.id)}
-                    className={`group flex items-center justify-between px-3 py-2.5 rounded-xl cursor-pointer transition-all ${
+                    className={`group flex items-center justify-between px-3 py-2.5 rounded-xl cursor-pointer transition-all active:scale-[0.98] ${
                       isActive
                         ? 'bg-[#FFC93C] text-[#0B120D] font-bold shadow-md'
                         : 'text-[#FFFDF6]/80 hover:bg-white/5 hover:text-[#FFFDF6]'
@@ -383,8 +404,11 @@ export const ProjectWorkspaceModal: React.FC<ProjectWorkspaceModalProps> = ({
 
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setIsEditingCode(!isEditingCode)}
-                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  onClick={() => {
+                    sound.click();
+                    setIsEditingCode(!isEditingCode);
+                  }}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer active:scale-95 ${
                     isEditingCode
                       ? 'bg-[#FFC93C] text-[#0B120D]'
                       : 'bg-white/10 text-[#FFFDF6] hover:bg-white/20'
@@ -396,7 +420,7 @@ export const ProjectWorkspaceModal: React.FC<ProjectWorkspaceModalProps> = ({
                 {isEditingCode && (
                   <button
                     onClick={saveCurrentFileCode}
-                    className="btn-squeeze px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer"
+                    className="btn-squeeze px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer active:scale-95"
                   >
                     <Save className="w-3 h-3" />
                     <span>Save Edits</span>
@@ -438,3 +462,4 @@ export const ProjectWorkspaceModal: React.FC<ProjectWorkspaceModalProps> = ({
     </div>
   );
 };
+

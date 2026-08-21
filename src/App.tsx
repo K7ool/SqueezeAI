@@ -6,6 +6,7 @@ import { Navbar } from './components/Navbar';
 import { HeroSection } from './components/HeroSection';
 import { StatsStrip } from './components/StatsStrip';
 import { HowItWorks } from './components/HowItWorks';
+import { GameMapSection } from './components/GameMapSection';
 import { FeaturesGrid } from './components/FeaturesGrid';
 import { LuauDebuggerSection } from './components/LuauDebuggerSection';
 import { ShowcaseSection } from './components/ShowcaseSection';
@@ -17,6 +18,8 @@ import { Footer } from './components/Footer';
 import { AuthModal } from './components/AuthModal';
 import { DashboardModal } from './components/DashboardModal';
 import { RobloxStudioModal } from './components/RobloxStudioModal';
+import { DailyRewardsModal } from './components/DailyRewardsModal';
+import { DailyRewardsCard } from './components/DailyRewardsCard';
 import { safeFetchJson } from './utils/api';
 
 export default function App() {
@@ -36,6 +39,7 @@ export default function App() {
   const [isDashboardOpen, setIsDashboardOpen] = useState(false);
   const [dashboardTab, setDashboardTab] = useState<'chat' | 'ideas' | 'files' | 'generator' | 'history' | 'billing' | 'apikeys'>('chat');
   const [isStudioGuideOpen, setIsStudioGuideOpen] = useState(false);
+  const [isDailyRewardsOpen, setIsDailyRewardsOpen] = useState(false);
   
   // Toast notification
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -204,6 +208,7 @@ export default function App() {
         onOpenDashboard={() => openDashboardWithTab('chat')}
         onOpenStudioGuide={() => setIsStudioGuideOpen(true)}
         onOpenProjectWorkspace={() => openDashboardWithTab('files')}
+        onOpenDailyRewards={() => setIsDailyRewardsOpen(true)}
       />
 
       {/* Main Sections */}
@@ -217,7 +222,17 @@ export default function App() {
 
         <StatsStrip />
 
+        {/* Responsive Daily Rewards Live Banner */}
+        <section className="max-w-[1280px] mx-auto px-4 sm:px-6 py-4">
+          <DailyRewardsCard
+            onOpenModal={() => setIsDailyRewardsOpen(true)}
+            onShowToast={showToast}
+          />
+        </section>
+
         <HowItWorks />
+        
+        <GameMapSection />
 
         <FeaturesGrid
           onScrollToTry={() => openDashboardWithTab('chat')}
@@ -287,6 +302,12 @@ export default function App() {
       <RobloxStudioModal
         isOpen={isStudioGuideOpen}
         onClose={() => setIsStudioGuideOpen(false)}
+      />
+
+      <DailyRewardsModal
+        isOpen={isDailyRewardsOpen}
+        onClose={() => setIsDailyRewardsOpen(false)}
+        onShowToast={showToast}
       />
 
     </div>

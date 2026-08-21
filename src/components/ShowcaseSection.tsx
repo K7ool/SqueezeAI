@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { LuauCodeViewer } from './LuauCodeViewer';
 import { Terminal, HardDrive } from 'lucide-react';
+import { sound } from '../utils/audio';
 
 interface ShowcaseSectionProps {
   onOpenProjectWorkspace?: () => void;
@@ -213,11 +214,11 @@ end)`
   const currentTab = tabs[activeTab];
 
   return (
-    <section id="showcase" className="py-24 bg-[#142019] text-[#FFFDF6]">
-      <div className="max-w-[1180px] mx-auto px-6">
+    <section id="showcase" className="py-20 sm:py-24 bg-[#142019] text-[#FFFDF6]">
+      <div className="max-w-[1280px] mx-auto px-4 sm:px-6">
         
         {/* Section Header */}
-        <div className="max-w-[640px] mb-12">
+        <div className="max-w-[640px] mb-10 sm:mb-12">
           <span className="font-mono text-xs uppercase font-bold tracking-widest text-[#FFC93C]">
             Masterclass Luau Gallery
           </span>
@@ -234,11 +235,14 @@ end)`
           {tabs.map((tab, idx) => (
             <button
               key={idx}
-              onClick={() => setActiveTab(idx)}
-              className={`px-4 py-2 rounded-full font-mono text-xs font-bold transition-all cursor-pointer border ${
+              onClick={() => {
+                sound.pop();
+                setActiveTab(idx);
+              }}
+              className={`px-4 py-2 rounded-full font-mono text-xs font-bold transition-all cursor-pointer border active:scale-95 ${
                 activeTab === idx
-                  ? 'bg-[#FFC93C] text-[#0B120D] border-[#FFC93C]'
-                  : 'bg-transparent text-[#FFFDF6]/70 border-white/15 hover:border-white/35 hover:text-[#FFFDF6]'
+                  ? 'bg-[#FFC93C] text-[#0B120D] border-[#FFC93C] shadow-md'
+                  : 'bg-transparent text-[#FFFDF6]/70 border-white/15 hover:border-white/35 hover:text-[#FFFDF6] hover:bg-white/5'
               }`}
             >
               {tab.name}
@@ -247,7 +251,7 @@ end)`
         </div>
 
         {/* Code Window with LuauCodeViewer */}
-        <div className="bg-[#1D2E24] border border-white/10 rounded-2xl p-4 shadow-2xl space-y-3">
+        <div className="bg-[#1D2E24] border border-white/10 rounded-2xl p-3 sm:p-4 shadow-2xl space-y-3">
           <LuauCodeViewer
             code={currentTab.code}
             filename={currentTab.filename}

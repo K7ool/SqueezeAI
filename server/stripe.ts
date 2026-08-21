@@ -1,4 +1,4 @@
-import { db, UserRecord } from './db';
+import { db, UserRecord } from './db.js';
 
 export const PLANS = {
   free: {

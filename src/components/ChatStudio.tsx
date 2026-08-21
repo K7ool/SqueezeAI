@@ -2,11 +2,23 @@ import React, { useState, useRef, useEffect } from 'react';
 import { 
   Send, Sparkles, Plus, Trash2, MessageSquare, HardDrive, 
   FileCode, Check, Copy, Download, RefreshCw, Layers, ArrowRight, Lightbulb, Terminal,
-  Search, BookOpen, ExternalLink, Zap, ShieldCheck
+  Search, BookOpen, ExternalLink, Zap, ShieldCheck, ChevronDown, ChevronRight,
+  Cpu, AlertTriangle, Shield, CheckCircle2, Clock, FilePlus, Code2, Play, Folder
 } from 'lucide-react';
-import { RobloxProject, ChatSession, ChatMessage, ProjectFile, RobloxSkillCitation } from '../types/project';
+import { 
+  RobloxProject, 
+  ChatSession, 
+  ChatMessage, 
+  ProjectFile, 
+  RobloxSkillCitation, 
+  ThinkingStep, 
+  ChangePlan, 
+  CodeReviewPayload, 
+  GeneratedFilePayload 
+} from '../types/project';
 import { LuauCodeViewer } from './LuauCodeViewer';
 import { RobloxSkillSearchModal } from './RobloxSkillSearchModal';
+import { MarkdownRenderer } from './MarkdownRenderer';
 import { 
   loadChatSessionsFromStorage, 
   saveChatSessionsToStorage, 
@@ -16,12 +28,14 @@ import {
 } from '../utils/projectDisk';
 import { formatAndSanitizeLuau } from '../utils/luauFormatter';
 import { safeFetchJson, getClientSideEmergencyResponse } from '../utils/api';
+import { syncFileToStudio } from '../utils/syncClient';
 
 interface ChatStudioProps {
   project: RobloxProject;
   onUpdateProject: (updated: RobloxProject) => void;
   onShowToast: (msg: string) => void;
   onOpenCodeInEditor: (fileId: string) => void;
+  initialPrompt?: string;
 }
 
 export const ChatStudio: React.FC<ChatStudioProps> = ({
@@ -29,6 +43,7 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
   onUpdateProject,
   onShowToast,
   onOpenCodeInEditor,
+  initialPrompt,
 }) => {
   const [sessions, setSessions] = useState<ChatSession[]>(() => loadChatSessionsFromStorage());
   const [activeSessionId, setActiveSessionId] = useState<string>(() => {
@@ -38,6 +53,20 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
   const [inputText, setInputText] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [isSkillSearchOpen, setIsSkillSearchOpen] = useState(false);
+  const [expandedThinkingMessageIds, setExpandedThinkingMessageIds] = useState<Record<string, boolean>>({});
+  const [selectedFileTabByMsg, setSelectedFileTabByMsg] = useState<Record<string, number>>({});
+  const [thinkingStageIndex, setThinkingStageIndex] = useState(0);
+
+  // Auto trigger initialPrompt if passed from GameMap or other workspaces
+  useEffect(() => {
+    if (initialPrompt && initialPrompt.trim().length > 0) {
+      handleSendMessage(initialPrompt.trim());
+    }
+  }, [initialPrompt]);
+
+  // Context-aware right side panel state
+  const [rightPanelMode, setRightPanelMode] = useState<'none' | 'files' | 'intelligence'>('none');
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -47,32 +76,54 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [activeSession?.messages, isSending]);
 
-  // Automatically adjust textarea height when multiline content or Shift+Enter is pressed
+  // Thinking stage cycling during request
   useEffect(() => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = `${Math.min(Math.max(textareaRef.current.scrollHeight, 44), 160)}px`;
+    if (!isSending) {
+      setThinkingStageIndex(0);
+      return;
     }
-  }, [inputText]);
+    const stages = [
+      "Analyzing Roblox Studio requirements...",
+      "Reading workspace context & hierarchy...",
+      "Formulating client-server architecture...",
+      "Writing production Luau code with --!strict...",
+      "Verifying security, rate limits & signal cleanups..."
+    ];
+    const interval = setInterval(() => {
+      setThinkingStageIndex((prev) => (prev + 1) % stages.length);
+    }, 2200);
+    return () => clearInterval(interval);
+  }, [isSending]);
+
+  const toggleThinking = (msgId: string) => {
+    setExpandedThinkingMessageIds(prev => ({
+      ...prev,
+      [msgId]: !prev[msgId]
+    }));
+  };
 
   const handleCreateNewChat = () => {
-    const newName = generateRandomChatName();
     const newSession: ChatSession = {
       id: `chat-${Date.now()}`,
-      name: newName,
+      name: generateRandomChatName(),
       createdAt: Date.now(),
       updatedAt: Date.now(),
       messages: [
         {
-          id: `msg-init-${Date.now()}`,
+          id: `welcome-${Date.now()}`,
           role: 'assistant',
-          content: `New session started for **${newName}**! I have full access to your game files in \`${project.name}\` and the complete **Roblox Skills & Creator Hub Knowledge Base**.\n\nAsk me any question about Roblox engine APIs (Pathfinding, DataStores, TweenService, Raycasting, Raycast hitboxes, ContextActionService), or ask me to **build and implement any system directly for you**!`,
+          content: `Hey! I'm **Squeeze**, your Elite Roblox Luau Engineer & Architect. I have full visibility over your project (**${project.name}**) with **${project.files.length} scripts** loaded.\n\nAsk me to build game mechanics, create modular systems, debug memory leaks, or generate full multi-file architectures!`,
           timestamp: Date.now(),
+          thinkingSteps: [
+            { stage: "Request Understanding", details: "Initialized session with active workspace context.", completed: true, durationMs: 40 },
+            { stage: "Project Context Analysis", details: `Loaded ${project.files.length} files into memory.`, completed: true, durationMs: 60 },
+            { stage: "Completed", details: "Ready for development commands.", completed: true, durationMs: 10 }
+          ],
           suggestedPrompts: [
-            "Make admin commands for my game",
-            "How does PathfindingService work?",
-            "Create a safe DataStore with auto-save",
-            "Make a high-speed raycast combat hitbox"
+            "Analyze my project architecture",
+            "Build an admin commands system",
+            "Create a safe DataStore manager",
+            "Make an interactive loot chest"
           ]
         }
       ]
@@ -82,38 +133,38 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
     setSessions(updated);
     setActiveSessionId(newSession.id);
     saveChatSessionsToStorage(updated);
-    onShowToast(`Created new chat: ${newName}`);
+    onShowToast(`Created new chat "${newSession.name}"!`);
   };
 
   const handleDeleteChat = (sessionId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (sessions.length <= 1) {
-      onShowToast('Cannot delete the only active chat session.');
+      onShowToast('Cannot delete the last chat session.');
       return;
     }
-    const updated = sessions.filter(s => s.id !== sessionId);
-    setSessions(updated);
+    const filtered = sessions.filter(s => s.id !== sessionId);
+    setSessions(filtered);
     if (activeSessionId === sessionId) {
-      setActiveSessionId(updated[0].id);
+      setActiveSessionId(filtered[0].id);
     }
-    saveChatSessionsToStorage(updated);
+    saveChatSessionsToStorage(filtered);
     onShowToast('Chat session deleted.');
   };
 
-  const handleSendMessage = async (textToSend?: string) => {
-    const prompt = (textToSend || inputText).trim();
-    if (!prompt || isSending) return;
+  const handleSendMessage = async (customPrompt?: string) => {
+    const promptToSend = (customPrompt || inputText).trim();
+    if (!promptToSend || isSending) return;
 
-    setInputText('');
     const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,
       role: 'user',
-      content: prompt,
+      content: promptToSend,
       timestamp: Date.now()
     };
 
-    // Add user message to state
     const currentMessages = [...(activeSession?.messages || []), userMsg];
+    
+    // Update local state with user message immediately
     const updatedSessionsWithUser = sessions.map(s => {
       if (s.id === activeSessionId) {
         return {
@@ -127,14 +178,21 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
 
     setSessions(updatedSessionsWithUser);
     saveChatSessionsToStorage(updatedSessionsWithUser);
+    setInputText('');
     setIsSending(true);
 
     try {
-      // Build project context string from real project files
-      const projectContext = `PROJECT NAME: ${project.name}\nTOTAL SCRIPTS: ${project.files.length}\nFILES SUMMARY:\n` +
-        project.files.map(f => `--- ${f.path} (${f.scriptType} -> ${f.targetInstance}) ---\n${f.code.slice(0, 1000)}`).join('\n\n');
+      // Build high-density project context
+      const projectContext = `Current Roblox Project: "${project.name}"
+Root Folder: "${project.folderName || project.name || 'RobloxStudioGame'}"
+Total Scripts: ${project.files.length}
+
+Files Overview:
+${project.files.map(f => `- ${f.path} [${f.scriptType} -> ${f.targetInstance}] (${f.code.split('\n').length} lines)`).join('\n')}`;
 
       const token = localStorage.getItem('squeeze_token');
+
+      // Attempt AI backend endpoint
       const apiResult = await safeFetchJson('/api/chat', {
         method: 'POST',
         headers: {
@@ -143,7 +201,14 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
         },
         body: JSON.stringify({
           messages: currentMessages.map(m => ({ role: m.role, content: m.content })),
-          projectContext
+          projectContext,
+          projectFiles: project.files.map(f => ({
+            path: f.path,
+            name: f.name,
+            code: f.code,
+            scriptType: f.scriptType,
+            targetInstance: f.targetInstance
+          }))
         })
       });
 
@@ -152,53 +217,82 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
       if (apiResult.ok && apiResult.data) {
         data = apiResult.data;
       } else {
-        // Fallback for Vercel static deployments or unconfigured backend routes
-        console.warn('API returned non-OK or non-JSON:', apiResult.error);
-        data = getClientSideEmergencyResponse(prompt);
+        // Fallback for offline or static deployments
+        console.warn('API returned non-OK or non-JSON, using client fallback:', apiResult.error);
+        data = getClientSideEmergencyResponse(promptToSend, project.files);
       }
 
-      // If script was generated, save into project files!
+      // Collect all generated scripts (both single and multi-file)
+      const scriptsToApply: GeneratedFilePayload[] = [];
+      if (data.filesGenerated && Array.isArray(data.filesGenerated) && data.filesGenerated.length > 0) {
+        scriptsToApply.push(...data.filesGenerated);
+      } else if (data.generatedScript && data.generatedScript.code) {
+        scriptsToApply.push(data.generatedScript);
+      }
+
       let modifiedFilesList: ChatMessage['modifiedFiles'] = undefined;
       let targetFileId: string | undefined = undefined;
 
-      if (data.generatedScript && data.generatedScript.code) {
-        const cleanCode = formatAndSanitizeLuau(data.generatedScript.code);
-        const fileName = (data.generatedScript.filePath?.split('/').pop()) || `${data.generatedScript.title.replace(/[^a-zA-Z0-9]/g, '')}.server.luau`;
-        const filePath = data.generatedScript.filePath || `src/server/${fileName}`;
-
-        const existingFileIndex = project.files.findIndex(f => f.path === filePath || f.name === fileName);
+      if (scriptsToApply.length > 0) {
         let updatedProjectFiles = [...project.files];
-        let fileActionType: 'created' | 'updated' = 'created';
+        const recordedModifications: NonNullable<ChatMessage['modifiedFiles']> = [];
 
-        if (existingFileIndex >= 0) {
-          fileActionType = 'updated';
-          targetFileId = project.files[existingFileIndex].id;
-          updatedProjectFiles[existingFileIndex] = {
-            ...project.files[existingFileIndex],
-            code: cleanCode,
-            lastModified: Date.now()
-          };
-        } else {
-          const newFile: ProjectFile = {
-            id: `file-chat-${Date.now()}`,
-            name: fileName,
-            path: filePath,
-            code: cleanCode,
-            scriptType: data.generatedScript.scriptType || 'Server Script',
-            targetInstance: data.generatedScript.targetInstance || 'ServerScriptService',
-            lastModified: Date.now(),
-            tags: ['ChatGenerated']
-          };
-          targetFileId = newFile.id;
-          updatedProjectFiles.push(newFile);
-        }
+        for (const scriptPayload of scriptsToApply) {
+          const cleanCode = formatAndSanitizeLuau(scriptPayload.code);
+          const fileName = (scriptPayload.filePath?.split('/').pop()) || `${(scriptPayload.title || 'Script').replace(/[^a-zA-Z0-9]/g, '')}.server.luau`;
+          const filePath = scriptPayload.filePath || `src/server/${fileName}`;
 
-        // Direct write to disk if native folder is attached
-        if (project.dirHandle) {
-          const fileToSave = updatedProjectFiles.find(f => f.id === targetFileId);
-          if (fileToSave) {
-            await saveFileToDiskHandle(fileToSave, cleanCode, project.dirHandle);
+          const existingFileIndex = updatedProjectFiles.findIndex(f => f.path === filePath || f.name === fileName);
+          let fileActionType: 'created' | 'updated' = 'created';
+          let savedFileId = '';
+
+          if (existingFileIndex >= 0) {
+            fileActionType = 'updated';
+            savedFileId = updatedProjectFiles[existingFileIndex].id;
+            updatedProjectFiles[existingFileIndex] = {
+              ...updatedProjectFiles[existingFileIndex],
+              code: cleanCode,
+              lastModified: Date.now()
+            };
+          } else {
+            const newFile: ProjectFile = {
+              id: `file-chat-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+              name: fileName,
+              path: filePath,
+              code: cleanCode,
+              scriptType: scriptPayload.scriptType || 'Server Script',
+              targetInstance: scriptPayload.targetInstance || 'ServerScriptService',
+              lastModified: Date.now(),
+              tags: ['AICreated', 'LuauStrict']
+            };
+            savedFileId = newFile.id;
+            updatedProjectFiles.push(newFile);
           }
+
+          if (!targetFileId) {
+            targetFileId = savedFileId;
+          }
+
+          // Direct write to disk if native folder handle is available
+          if (project.dirHandle) {
+            const fileToSave = updatedProjectFiles.find(f => f.id === savedFileId);
+            if (fileToSave) {
+              await saveFileToDiskHandle(fileToSave, cleanCode, project.dirHandle);
+            }
+          }
+
+          recordedModifications.push({
+            path: filePath,
+            name: fileName,
+            action: fileActionType
+          });
+
+          // Auto-queue for Roblox Studio WebSync
+          syncFileToStudio(project.id, {
+            path: filePath,
+            name: fileName,
+            source: cleanCode
+          }, 'ai').catch(err => console.warn('Studio WebSync push error:', err));
         }
 
         const updatedProject: RobloxProject = {
@@ -210,16 +304,13 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
 
         onUpdateProject(updatedProject);
         saveProjectToLocalStorage(updatedProject);
+        modifiedFilesList = recordedModifications;
 
-        modifiedFilesList = [
-          {
-            path: filePath,
-            name: fileName,
-            action: fileActionType
-          }
-        ];
-
-        onShowToast(`⚡ Luau script ${fileActionType === 'created' ? 'created' : 'updated'} in ${fileName}!`);
+        if (scriptsToApply.length === 1) {
+          onShowToast(`⚡ Luau script ${recordedModifications[0].action} in ${recordedModifications[0].name}!`);
+        } else {
+          onShowToast(`⚡ Generated and saved ${scriptsToApply.length} scripts in workspace!`);
+        }
       }
 
       const assistantMsg: ChatMessage = {
@@ -227,14 +318,18 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
         role: 'assistant',
         content: data.message || 'Here is the implementation for your game.',
         timestamp: Date.now(),
+        thinkingSteps: data.thinkingSteps,
+        changePlan: data.changePlan,
+        codeReview: data.codeReview,
         skillsFound: data.skillsFound,
         actionPerformed: data.actionPerformed,
         generatedScript: data.generatedScript,
+        filesGenerated: data.filesGenerated,
         modifiedFiles: modifiedFilesList,
         suggestedPrompts: data.suggestedPrompts || [
-          "Add cooldown timer debounce",
-          "Create a companion LocalScript",
-          "Save data to DataStoreService"
+          "Add debounce protection",
+          "Create a client-side UI controller",
+          "Save player state with DataStoreService"
         ]
       };
 
@@ -257,7 +352,7 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
       const errorMsg: ChatMessage = {
         id: `err-${Date.now()}`,
         role: 'assistant',
-        content: `I ran into an issue connecting with the AI engine: ${err.message}. Please try again.`,
+        content: `I encountered an issue while processing your request: ${err.message}. Please try again.`,
         timestamp: Date.now()
       };
       const finalMessages = [...currentMessages, errorMsg];
@@ -268,6 +363,14 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
       setIsSending(false);
     }
   };
+
+  const thinkingStages = [
+    "Analyzing Roblox Studio requirements...",
+    "Reading workspace context & hierarchy...",
+    "Formulating client-server architecture...",
+    "Writing production Luau code with --!strict...",
+    "Verifying security, rate limits & signal cleanups..."
+  ];
 
   return (
     <div className="flex flex-col md:flex-row h-full bg-[#0D1117] text-[#FFFDF6] overflow-hidden rounded-xl border border-white/10">
@@ -287,7 +390,7 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
           <button
             onClick={handleCreateNewChat}
             className="p-1.5 rounded-lg bg-[#FFC93C] text-[#0B120D] hover:bg-[#ffe082] transition-all cursor-pointer flex items-center gap-1 text-xs font-bold font-mono"
-            title="Create New Chat with Random Name"
+            title="Create New Chat"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>New</span>
@@ -339,18 +442,55 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
       {/* Right Column: Active Conversation Feed */}
       <div className="flex-1 flex flex-col bg-[#0D1117] overflow-hidden min-h-[460px]">
         
-        {/* Chat Feed Header with Roblox Skills Explorer Button */}
+        {/* Chat Feed Header */}
         <div className="px-4 py-2.5 border-b border-white/10 bg-[#161B22]/80 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
+            <div className="w-2 h-2 rounded-full bg-[#A8E6B0] animate-pulse" />
             <h3 className="font-bold text-xs sm:text-sm text-[#FFFDF6] truncate font-display">
               {activeSession?.name}
             </h3>
             <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-[#A8E6B0]/15 text-[#A8E6B0] font-bold border border-[#A8E6B0]/30 shrink-0">
-              Project Context Active
+              Elite Engineer Active
             </span>
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setRightPanelMode(prev => prev === 'files' ? 'none' : 'files')}
+              className={`px-2.5 py-1 rounded-lg border text-xs font-mono font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                rightPanelMode === 'files'
+                  ? 'bg-[#FFC93C] text-[#0B120D] border-[#FFC93C]'
+                  : 'bg-white/5 hover:bg-white/10 text-white/80 border-white/10'
+              }`}
+              title="Toggle Project Files context panel"
+            >
+              <Folder className="w-3.5 h-3.5" />
+              <span>Project Files</span>
+            </button>
+
+            <button
+              onClick={() => setRightPanelMode(prev => prev === 'intelligence' ? 'none' : 'intelligence')}
+              className={`px-2.5 py-1 rounded-lg border text-xs font-mono font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                rightPanelMode === 'intelligence'
+                  ? 'bg-[#FFC93C] text-[#0B120D] border-[#FFC93C]'
+                  : 'bg-white/5 hover:bg-white/10 text-white/80 border-white/10'
+              }`}
+              title="Toggle Game Intelligence context panel"
+            >
+              <Lightbulb className="w-3.5 h-3.5" />
+              <span>Intelligence</span>
+            </button>
+
+            <button
+              onClick={() => handleSendMessage("Read my project and analyze all scripts, functions, and architecture.")}
+              disabled={isSending || project.files.length === 0}
+              className="px-2.5 py-1 rounded-lg bg-[#A8E6B0]/15 hover:bg-[#A8E6B0]/25 text-[#A8E6B0] border border-[#A8E6B0]/30 text-xs font-mono font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Inspect and analyze all loaded scripts, functions, and systems in your game"
+            >
+              <FileCode className="w-3.5 h-3.5" />
+              <span>Read My Project</span>
+            </button>
+
             <button
               onClick={() => setIsSkillSearchOpen(true)}
               className="px-2.5 py-1 rounded-lg bg-[#FFC93C]/15 hover:bg-[#FFC93C]/25 text-[#FFC93C] border border-[#FFC93C]/30 text-xs font-mono font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
@@ -366,245 +506,299 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
           </div>
         </div>
 
-        {/* Messages Scroll Area */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 font-body">
-          {activeSession?.messages.map((msg, index) => {
-            const isAi = msg.role === 'assistant';
-            return (
-              <div
-                key={msg.id || index}
-                className={`flex flex-col ${isAi ? 'items-start' : 'items-end'}`}
-              >
-                <div className={`flex items-center gap-2 mb-1 text-[11px] font-mono ${isAi ? 'text-[#FFC93C]' : 'text-[#79C0FF]'}`}>
-                  <span className="font-bold">{isAi ? '⚡ Squeeze AI Co-Pilot' : 'You'}</span>
-                  <span className="text-white/30 text-[10px]">
-                    {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </span>
-                </div>
+        {/* Main Conversation & Optional Context-Aware Right Panel */}
+        <div className="flex-1 flex overflow-hidden">
+          
+          {/* Messages & Composer */}
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {/* Messages Scroll Area */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-5 font-body">
+              {activeSession?.messages.map((msg, index) => {
+                const isAi = msg.role === 'assistant';
+                const hasThinking = isAi && msg.thinkingSteps && msg.thinkingSteps.length > 0;
+                const isThinkingExpanded = hasThinking ? (expandedThinkingMessageIds[msg.id] ?? false) : false;
 
-                <div
-                  className={`max-w-[95%] sm:max-w-[85%] rounded-2xl p-4 text-xs sm:text-sm leading-relaxed ${
-                    isAi
-                      ? 'bg-[#161B22] border border-white/10 text-[#FFFDF6] rounded-tl-sm shadow-md'
-                      : 'bg-[#FFC93C] text-[#0B120D] font-medium rounded-tr-sm'
-                  }`}
-                >
-                  <p className="whitespace-pre-wrap">{msg.content}</p>
+                // Determine all generated files to display
+                const displayFiles: GeneratedFilePayload[] = [];
+                if (msg.filesGenerated && msg.filesGenerated.length > 0) {
+                  displayFiles.push(...msg.filesGenerated);
+                } else if (msg.generatedScript) {
+                  displayFiles.push(msg.generatedScript);
+                }
 
-                  {/* Action Performed Badge */}
-                  {isAi && msg.actionPerformed && (
-                    <div className="mt-3 p-2.5 rounded-xl bg-[#0D1117] border border-[#A8E6B0]/30 flex items-start gap-2">
-                      <Zap className="w-4 h-4 text-[#A8E6B0] shrink-0 mt-0.5 fill-current" />
-                      <div className="text-xs font-mono">
-                        <div className="font-bold text-[#A8E6B0]">
-                          {msg.actionPerformed.summary}
-                        </div>
-                        {msg.actionPerformed.details && (
-                          <div className="text-white/60 text-[11px] mt-0.5">
-                            {msg.actionPerformed.details}
-                          </div>
-                        )}
-                      </div>
+                const activeTabIdx = selectedFileTabByMsg[msg.id] || 0;
+                const activeFile = displayFiles[activeTabIdx] || displayFiles[0];
+
+                return (
+                  <div
+                    key={msg.id || index}
+                    className={`flex flex-col ${isAi ? 'items-start' : 'items-end'}`}
+                  >
+                    <div className={`flex items-center gap-2 mb-1 text-[11px] font-mono ${isAi ? 'text-[#FFC93C]' : 'text-[#79C0FF]'}`}>
+                      <span className="font-bold">{isAi ? '⚡ Squeeze Senior Engineer' : 'You'}</span>
+                      <span className="text-white/30 text-[10px]">
+                        {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
                     </div>
-                  )}
 
-                  {/* Roblox Skill Citations / Search Results */}
-                  {isAi && msg.skillsFound && msg.skillsFound.length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
-                      <div className="flex items-center justify-between text-[11px] font-mono text-[#FFC93C] font-bold">
-                        <span className="flex items-center gap-1.5">
-                          <BookOpen className="w-3.5 h-3.5" />
-                          Roblox Engine Skills &amp; Reference Docs
-                        </span>
-                        <span className="text-white/40 text-[10px]">
-                          {msg.skillsFound.length} skill{msg.skillsFound.length > 1 ? 's' : ''} cited
-                        </span>
+                    <div
+                      className={`max-w-[95%] sm:max-w-[88%] rounded-2xl p-4 sm:p-5 text-xs sm:text-sm leading-relaxed space-y-3.5 ${
+                        isAi
+                          ? 'bg-[#161B22] border border-white/10 text-[#FFFDF6] rounded-tl-sm shadow-lg'
+                          : 'bg-[#FFC93C] text-[#0B120D] font-medium rounded-tr-sm'
+                      }`}
+                    >
+                      {/* Main Message Content */}
+                      <div className="w-full">
+                        <MarkdownRenderer content={msg.content} theme={isAi ? 'dark' : 'light'} />
                       </div>
 
-                      <div className="grid grid-cols-1 gap-2">
-                        {msg.skillsFound.slice(0, 3).map((skill, sIdx) => (
-                          <div key={sIdx} className="p-2.5 rounded-xl bg-[#0D1117] border border-white/10 text-xs space-y-1.5">
-                            <div className="flex items-center justify-between gap-1">
-                              <span className="font-bold text-[#FFFDF6] font-display flex items-center gap-1.5">
-                                <Sparkles className="w-3 h-3 text-[#FFC93C]" />
-                                {skill.title}
-                              </span>
-                              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/10 text-white/70">
-                                {skill.category}
-                              </span>
-                            </div>
-
-                            <p className="text-[11px] text-white/70 leading-relaxed font-body">
-                              {skill.summary}
-                            </p>
-
-                            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-                              {skill.apiDocsUrl && (
-                                <a
-                                  href={skill.apiDocsUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="inline-flex items-center gap-1 text-[10px] font-mono text-[#79C0FF] hover:underline"
+                      {/* Multi-File / Single-File Code Viewer */}
+                      {displayFiles.length > 0 && activeFile && (
+                        <div className="pt-2 border-t border-white/10 space-y-2">
+                          {/* Tabs if multi-file generated */}
+                          {displayFiles.length > 1 && (
+                            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 font-mono text-[11px]">
+                              {displayFiles.map((df, dfIdx) => (
+                                <button
+                                  key={dfIdx}
+                                  onClick={() => setSelectedFileTabByMsg(prev => ({ ...prev, [msg.id]: dfIdx }))}
+                                  className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ${
+                                    activeTabIdx === dfIdx
+                                      ? 'bg-[#FFC93C] text-[#0B120D] font-bold shadow'
+                                      : 'bg-white/5 hover:bg-white/10 text-white/70'
+                                  }`}
                                 >
-                                  Creator Hub Docs
-                                  <ExternalLink className="w-2.5 h-2.5" />
-                                </a>
-                              )}
+                                  <FileCode className="w-3.5 h-3.5" />
+                                  <span>{df.filePath?.split('/').pop() || df.title}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
 
-                              <button
-                                onClick={() => handleSendMessage(`Build and implement the ${skill.title} system for my Roblox game with --!strict typing and create the file in my workspace.`)}
-                                className="px-2 py-0.5 rounded bg-[#FFC93C]/20 hover:bg-[#FFC93C]/30 text-[#FFC93C] text-[10px] font-mono font-bold flex items-center gap-1 transition-all cursor-pointer"
-                              >
-                                <Zap className="w-2.5 h-2.5 fill-current" />
-                                <span>⚡ Do It For Me</span>
-                              </button>
+                          {/* Header bar of active file */}
+                          <div className="flex items-center justify-between text-xs font-mono text-[#A8E6B0]">
+                            <span className="flex items-center gap-1 font-bold">
+                              <FileCode className="w-3.5 h-3.5" />
+                              {activeFile.title || activeFile.filePath}
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/60">
+                                {activeFile.scriptType}
+                              </span>
+                              <span className="text-[10px] text-white/50">{activeFile.targetInstance}</span>
                             </div>
                           </div>
-                        ))}
-                      </div>
+
+                          <LuauCodeViewer
+                            code={activeFile.code}
+                            filename={activeFile.filePath?.split('/').pop() || `${activeFile.title}.server.luau`}
+                            theme="dark"
+                            maxHeight="320px"
+                            onOpenInProject={() => {
+                              const fileMatch = project.files.find(f => 
+                                f.path === activeFile.filePath || 
+                                f.name === (activeFile.filePath?.split('/').pop())
+                              );
+                              if (fileMatch) {
+                                onOpenCodeInEditor(fileMatch.id);
+                              } else {
+                                onShowToast(`Opened ${activeFile.title} in project.`);
+                              }
+                            }}
+                            onSavedToDisk={(fname) => onShowToast(`Saved ${fname} to disk!`)}
+                          />
+                        </div>
+                      )}
                     </div>
-                  )}
+                  </div>
+                );
+              })}
 
-                  {/* If Luau code was generated, show inline code viewer */}
-                  {msg.generatedScript && (
-                    <div className="mt-3 pt-3 border-t border-white/10">
-                      <div className="flex items-center justify-between mb-2 text-xs font-mono text-[#A8E6B0]">
-                        <span className="flex items-center gap-1 font-bold">
-                          <FileCode className="w-3.5 h-3.5" />
-                          {msg.generatedScript.title}
-                        </span>
-                        <span className="text-[10px] text-white/50">{msg.generatedScript.targetInstance}</span>
-                      </div>
-
-                      <LuauCodeViewer
-                        code={msg.generatedScript.code}
-                        filename={msg.generatedScript.filePath?.split('/').pop() || `${msg.generatedScript.title}.server.luau`}
-                        theme="dark"
-                        maxHeight="280px"
-                        onOpenInProject={() => {
-                          const fileMatch = project.files.find(f => f.name === (msg.generatedScript?.filePath?.split('/').pop()));
-                          if (fileMatch) {
-                            onOpenCodeInEditor(fileMatch.id);
-                          }
-                        }}
-                        onSavedToDisk={(fname) => onShowToast(`Saved ${fname} to disk!`)}
+              {/* Dynamic Thinking State while Waiting for Response */}
+              {isSending && (
+                <div className="flex flex-col items-start space-y-2">
+                  <div className="flex items-center gap-2 text-[11px] font-mono text-[#FFC93C]">
+                    <Cpu className="w-3.5 h-3.5 animate-spin text-[#FFC93C]" />
+                    <span className="font-bold">⚡ Squeeze Reasoning Engine</span>
+                  </div>
+                  <div className="bg-[#161B22] border border-white/10 text-[#FFFDF6] rounded-2xl rounded-tl-sm p-4 text-xs font-mono shadow-md space-y-2 max-w-[85%]">
+                    <div className="flex items-center gap-2 text-[#A8E6B0]">
+                      <RefreshCw className="w-4 h-4 animate-spin text-[#FFC93C]" />
+                      <span className="font-bold">{thinkingStages[thinkingStageIndex]}</span>
+                    </div>
+                    <div className="w-full bg-white/10 h-1 rounded-full overflow-hidden">
+                      <div 
+                        className="bg-[#FFC93C] h-full transition-all duration-700 ease-out" 
+                        style={{ width: `${((thinkingStageIndex + 1) / thinkingStages.length) * 100}%` }}
                       />
                     </div>
-                  )}
+                    <p className="text-[10px] text-white/40">
+                      Formulating architecture with strict Luau typing, security validation, and project-aware references.
+                    </p>
+                  </div>
+                </div>
+              )}
 
-                  {/* Modified Files Badge */}
-                  {msg.modifiedFiles && msg.modifiedFiles.length > 0 && (
-                    <div className="mt-2.5 flex flex-wrap gap-1.5">
-                      {msg.modifiedFiles.map((mf, i) => (
-                        <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#A8E6B0]/15 text-[#A8E6B0] border border-[#A8E6B0]/30 font-mono text-[10px] font-bold">
-                          <Check className="w-3 h-3" />
-                          {mf.action === 'created' ? 'Created' : 'Updated'}: {mf.name}
-                        </span>
-                      ))}
-                    </div>
-                  )}
+              <div ref={messagesEndRef} />
+            </div>
 
-                  {/* Follow-up Suggestion Chips */}
-                  {isAi && msg.suggestedPrompts && msg.suggestedPrompts.length > 0 && (
-                    <div className="mt-3 pt-2.5 border-t border-white/10 flex flex-wrap gap-1.5">
-                      {msg.suggestedPrompts.map((sug, i) => (
-                        <button
-                          key={i}
-                          onClick={() => handleSendMessage(sug)}
-                          className="text-[11px] font-mono px-2.5 py-1 rounded-full bg-white/5 hover:bg-[#FFC93C] hover:text-[#0B120D] text-white/70 border border-white/15 transition-all cursor-pointer"
-                        >
-                          {sug}
-                        </button>
-                      ))}
-                    </div>
+            {/* Input Box Bar */}
+            <div className="p-3 sm:p-4 bg-[#161B22] border-t border-white/10 flex flex-col gap-1.5">
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleSendMessage();
+                }}
+                className="flex items-end gap-2"
+              >
+                <div className="flex-1 relative flex items-center bg-[#0D1117] border border-white/15 rounded-xl focus-within:border-[#FFC93C] transition-all">
+                  <textarea
+                    ref={textareaRef}
+                    value={inputText}
+                    onChange={(e) => setInputText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        if (e.shiftKey) {
+                          return;
+                        } else {
+                          e.preventDefault();
+                          handleSendMessage();
+                        }
+                      }
+                    }}
+                    placeholder={`Ask Squeeze anything about Roblox skills or "make an admin commands system"…`}
+                    disabled={isSending}
+                    rows={1}
+                    className="w-full bg-transparent px-4 py-2.5 text-xs sm:text-sm text-[#FFFDF6] placeholder:text-white/35 focus:outline-none resize-none font-body custom-scrollbar leading-relaxed"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isSending || !inputText.trim()}
+                  className="btn-squeeze px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0 h-[42px]"
+                  title="Send message (Enter)"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Send</span>
+                </button>
+              </form>
+
+              {/* Quick Keyboard Helper & Discovery Pills */}
+              <div className="flex flex-wrap items-center justify-between gap-1.5 px-1 text-[10px] font-mono text-white/40 select-none">
+                <div className="flex items-center gap-2">
+                  <span>
+                    Press <kbd className="px-1 py-0.5 rounded bg-white/10 text-white/70">Enter</kbd> to send, <kbd className="px-1 py-0.5 rounded bg-white/10 text-white/70">Shift + Enter</kbd> for newline
+                  </span>
+                  {inputText.includes('\n') && (
+                    <span className="text-[#FFC93C] font-semibold">
+                      {inputText.split('\n').length} lines
+                    </span>
                   )}
                 </div>
-              </div>
-            );
-          })}
 
-          {isSending && (
-            <div className="flex flex-col items-start">
-              <div className="flex items-center gap-2 mb-1 text-[11px] font-mono text-[#FFC93C]">
-                <span className="font-bold">⚡ Squeeze AI Co-Pilot</span>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => handleSendMessage("Read my project and analyze all scripts, functions, and architecture.")}
+                    disabled={isSending || project.files.length === 0}
+                    className="text-[#A8E6B0] hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                  >
+                    <FileCode className="w-3 h-3" />
+                    <span>Read Project ({project.files.length} scripts)</span>
+                  </button>
+
+                  <button
+                    onClick={() => setIsSkillSearchOpen(true)}
+                    className="text-[#FFC93C] hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <Sparkles className="w-3 h-3" />
+                    <span>Browse 10+ Skills</span>
+                  </button>
+                </div>
               </div>
-              <div className="bg-[#161B22] border border-white/10 text-[#FFFDF6]/80 rounded-2xl rounded-tl-sm p-4 text-xs font-mono flex items-center gap-2.5">
-                <RefreshCw className="w-4 h-4 animate-spin text-[#FFC93C]" />
-                <span>Searching Roblox skills, reading project files &amp; engineering Luau solution…</span>
+            </div>
+          </div>
+
+          {/* Context-Aware Right Side Panel */}
+          {rightPanelMode !== 'none' && (
+            <div className="w-80 bg-[#11161D] border-l border-white/10 flex flex-col shrink-0 animate-fadeIn overflow-hidden">
+              <div className="p-3.5 border-b border-white/10 flex items-center justify-between bg-[#161B22]">
+                <div className="flex items-center gap-2 text-xs font-mono font-bold text-[#FFC93C]">
+                  {rightPanelMode === 'files' ? (
+                    <>
+                      <Folder className="w-4 h-4" />
+                      <span>Project Files Context ({project.files.length})</span>
+                    </>
+                  ) : (
+                    <>
+                      <Lightbulb className="w-4 h-4" />
+                      <span>Intelligence &amp; Gaps</span>
+                    </>
+                  )}
+                </div>
+
+                <button
+                  onClick={() => setRightPanelMode('none')}
+                  className="p-1 rounded hover:bg-white/10 text-white/60 hover:text-white cursor-pointer"
+                  title="Close panel"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-3 space-y-2 text-xs font-mono">
+                {rightPanelMode === 'files' ? (
+                  <div className="space-y-1.5">
+                    <p className="text-[11px] text-white/50 mb-2">
+                      Loaded project files available as AI context:
+                    </p>
+                    {project.files.map(file => (
+                      <div
+                        key={file.id}
+                        onClick={() => onOpenCodeInEditor(file.id)}
+                        className="p-2 rounded bg-white/5 hover:bg-white/10 border border-white/5 cursor-pointer flex items-center justify-between transition-all group"
+                      >
+                        <div className="truncate pr-2">
+                          <span className="font-semibold text-[#FFFDF6] block truncate">{file.name}</span>
+                          <span className="text-[10px] text-white/40 block truncate">{file.path}</span>
+                        </div>
+                        <span className="text-[10px] text-[#A8E6B0] shrink-0 group-hover:underline">Open &rarr;</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="p-3 rounded-lg bg-white/5 border border-white/10">
+                      <span className="text-[#FFC93C] font-bold block mb-1">Architecture Overview</span>
+                      <p className="text-[11px] text-white/70 font-body">
+                        Project <strong className="text-[#FFFDF6]">{project.name}</strong> has {project.files.length} scripts structured with server logic and module handlers.
+                      </p>
+                    </div>
+
+                    <div className="p-3 rounded-lg bg-white/5 border border-white/10">
+                      <span className="text-[#7EE787] font-bold block mb-1">Detected Systems</span>
+                      <ul className="text-[11px] text-white/70 space-y-1 mt-1">
+                        <li>&bull; Leaderstats &amp; Currency</li>
+                        <li>&bull; DataStore Save/Load</li>
+                        <li>&bull; Combat &amp; Tools</li>
+                      </ul>
+                    </div>
+
+                    <div className="p-3 rounded-lg bg-white/5 border border-white/10">
+                      <span className="text-[#79C0FF] font-bold block mb-1">Recommended Next Step</span>
+                      <p className="text-[11px] text-white/70 font-body">
+                        Ask Squeeze: &quot;Add daily quests and milestone rewards to maintain high retention.&quot;
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
-
-          <div ref={messagesEndRef} />
-        </div>
-
-        {/* Input Box Bar */}
-        <div className="p-3 sm:p-4 bg-[#161B22] border-t border-white/10 flex flex-col gap-1.5">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleSendMessage();
-            }}
-            className="flex items-end gap-2"
-          >
-            <div className="flex-1 relative flex items-center bg-[#0D1117] border border-white/15 rounded-xl focus-within:border-[#FFC93C] transition-all">
-              <textarea
-                ref={textareaRef}
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    if (e.shiftKey) {
-                      // Shift + Enter: let browser insert newline/space
-                      return;
-                    } else {
-                      // Plain Enter: submit prompt
-                      e.preventDefault();
-                      handleSendMessage();
-                    }
-                  }
-                }}
-                placeholder={`Ask Squeeze anything about Roblox skills or "make X for me"…`}
-                disabled={isSending}
-                rows={1}
-                className="w-full bg-transparent px-4 py-2.5 text-xs sm:text-sm text-[#FFFDF6] placeholder:text-white/35 focus:outline-none resize-none font-body custom-scrollbar leading-relaxed"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={isSending || !inputText.trim()}
-              className="btn-squeeze px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0 h-[42px]"
-              title="Send message (Enter)"
-            >
-              <Send className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Send</span>
-            </button>
-          </form>
-
-          {/* Quick Keyboard Helper & Discovery Pills */}
-          <div className="flex flex-wrap items-center justify-between gap-1.5 px-1 text-[10px] font-mono text-white/40 select-none">
-            <div className="flex items-center gap-2">
-              <span>
-                Press <kbd className="px-1 py-0.5 rounded bg-white/10 text-white/70">Enter</kbd> to send, <kbd className="px-1 py-0.5 rounded bg-white/10 text-white/70">Shift + Enter</kbd> for space
-              </span>
-              {inputText.includes('\n') && (
-                <span className="text-[#FFC93C] font-semibold">
-                  {inputText.split('\n').length} lines
-                </span>
-              )}
-            </div>
-
-            <button
-              onClick={() => setIsSkillSearchOpen(true)}
-              className="text-[#FFC93C] hover:underline flex items-center gap-1 cursor-pointer"
-            >
-              <Sparkles className="w-3 h-3" />
-              <span>Browse 10+ Roblox Skills</span>
-            </button>
-          </div>
         </div>
       </div>
+
 
       {/* Roblox Skills Knowledge Explorer Modal */}
       <RobloxSkillSearchModal
@@ -623,4 +817,3 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
     </div>
   );
 };
-

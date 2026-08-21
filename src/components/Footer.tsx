@@ -1,4 +1,5 @@
 import React from 'react';
+import { sound } from '../utils/audio';
 
 interface FooterProps {
   onOpenStudioGuide: () => void;
@@ -23,14 +24,20 @@ export const Footer: React.FC<FooterProps> = ({ onOpenStudioGuide, onScrollToTry
 
           <div className="flex flex-wrap justify-center gap-3.5 mt-8">
             <button
-              onClick={onOpenStudioGuide}
-              className="btn-squeeze-dark font-bold text-sm px-6 py-3.5 rounded-full cursor-pointer"
+              onClick={() => {
+                sound.click();
+                onOpenStudioGuide();
+              }}
+              className="btn-squeeze-dark font-bold text-sm px-6 py-3.5 rounded-full cursor-pointer active:scale-95"
             >
               Add to Roblox Studio
             </button>
             <button
-              onClick={onScrollToTry}
-              className="px-6 py-3.5 rounded-full font-bold text-sm bg-transparent border-2 border-[#0B120D]/30 hover:border-[#0B120D] text-[#0B120D] transition-colors cursor-pointer"
+              onClick={() => {
+                sound.pop();
+                onScrollToTry();
+              }}
+              className="px-6 py-3.5 rounded-full font-bold text-sm bg-transparent border-2 border-[#0B120D]/30 hover:border-[#0B120D] text-[#0B120D] transition-all cursor-pointer active:scale-95 hover:bg-black/5"
             >
               Try the live generator ↑
             </button>
@@ -71,7 +78,7 @@ export const Footer: React.FC<FooterProps> = ({ onOpenStudioGuide, onScrollToTry
               <div>
                 <h4 className="text-[#FFFDF6]/40 uppercase tracking-wider font-bold mb-3.5">Resources</h4>
                 <ul className="space-y-2.5 p-0 list-none m-0">
-                  <li><button onClick={onOpenStudioGuide} className="hover:text-[#FFC93C] transition-colors cursor-pointer bg-transparent border-0 p-0 text-inherit font-mono text-xs">Studio Plugin Guide</button></li>
+                  <li><button onClick={() => { sound.click(); onOpenStudioGuide(); }} className="hover:text-[#FFC93C] transition-colors cursor-pointer bg-transparent border-0 p-0 text-inherit font-mono text-xs">Studio Plugin Guide</button></li>
                   <li><a href="#faq" className="hover:text-[#FFC93C] transition-colors">Roblox FAQ</a></li>
                   <li><a href="https://create.roblox.com/docs" target="_blank" rel="noreferrer" className="hover:text-[#FFC93C] transition-colors">Roblox Creator Docs</a></li>
                 </ul>
@@ -100,3 +107,4 @@ export const Footer: React.FC<FooterProps> = ({ onOpenStudioGuide, onScrollToTry
     </footer>
   );
 };
+

@@ -3,6 +3,7 @@ import { Copy, Check, Download, HardDrive, FileCode, Maximize2, Minimize2 } from
 import { tokenizeLuauScript, Token } from '../utils/luauSyntax';
 import { saveSingleScriptToDisk } from '../utils/projectDisk';
 import { formatAndSanitizeLuau } from '../utils/luauFormatter';
+import { sound } from '../utils/audio';
 
 interface LuauCodeViewerProps {
   code: string;
@@ -40,19 +41,23 @@ export const LuauCodeViewer: React.FC<LuauCodeViewerProps> = ({
   }, [formattedCode]);
 
   const handleCopy = () => {
+    sound.success();
     navigator.clipboard.writeText(formattedCode);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
   const handleSaveToDisk = async () => {
+    sound.pop();
     setIsSaving(true);
     try {
       const res = await saveSingleScriptToDisk(filename, formattedCode);
-      if (res.success && onSavedToDisk) {
-        onSavedToDisk(res.filename);
+      if (res.success) {
+        sound.success();
+        if (onSavedToDisk) onSavedToDisk(res.filename);
       }
     } catch (err) {
+      sound.error();
       console.error('Save to disk failed:', err);
     } finally {
       setIsSaving(false);
@@ -119,8 +124,11 @@ export const LuauCodeViewer: React.FC<LuauCodeViewerProps> = ({
         <div className="flex items-center gap-1 shrink-0">
           {onOpenInProject && (
             <button
-              onClick={onOpenInProject}
-              className={`p-1.5 sm:px-2 sm:py-1 rounded text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer ${
+              onClick={() => {
+                sound.whoosh();
+                onOpenInProject();
+              }}
+              className={`p-1.5 sm:px-2 sm:py-1 rounded text-xs font-semibold flex items-center gap-1 active:scale-95 transition-all cursor-pointer ${
                 isDark 
                   ? 'bg-white/10 hover:bg-white/20 text-[#FFFDF6]' 
                   : 'bg-[#142019]/10 hover:bg-[#142019]/20 text-[#0B120D]'
@@ -135,7 +143,7 @@ export const LuauCodeViewer: React.FC<LuauCodeViewerProps> = ({
           <button
             onClick={handleSaveToDisk}
             disabled={isSaving}
-            className={`p-1.5 sm:px-2 sm:py-1 rounded text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer ${
+            className={`p-1.5 sm:px-2 sm:py-1 rounded text-xs font-semibold flex items-center gap-1 active:scale-95 transition-all cursor-pointer ${
               isDark
                 ? 'bg-white/10 hover:bg-[#FFC93C] hover:text-[#0B120D] text-[#FFFDF6]'
                 : 'bg-[#142019]/10 hover:bg-[#FFC93C] hover:text-[#0B120D] text-[#0B120D]'
@@ -148,7 +156,7 @@ export const LuauCodeViewer: React.FC<LuauCodeViewerProps> = ({
 
           <button
             onClick={handleCopy}
-            className={`px-2 py-1 rounded text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer ${
+            className={`px-2 py-1 rounded text-xs font-semibold flex items-center gap-1 active:scale-95 transition-all cursor-pointer ${
               isDark
                 ? 'bg-white/10 hover:bg-white/20 text-[#FFFDF6]'
                 : 'bg-[#142019]/10 hover:bg-[#142019]/20 text-[#0B120D]'
@@ -160,8 +168,11 @@ export const LuauCodeViewer: React.FC<LuauCodeViewerProps> = ({
           </button>
 
           <button
-            onClick={() => setIsExpanded(!isExpanded)}
-            className="p-1.5 rounded hover:bg-white/10 text-xs transition-all cursor-pointer text-[#0B120D]/60 hover:text-[#0B120D]"
+            onClick={() => {
+              sound.click();
+              setIsExpanded(!isExpanded);
+            }}
+            className="p-1.5 rounded hover:bg-white/10 active:scale-95 text-xs transition-all cursor-pointer text-[#0B120D]/60 hover:text-[#0B120D]"
             title={isExpanded ? 'Collapse' : 'Expand'}
           >
             {isExpanded ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
@@ -220,3 +231,4 @@ export const LuauCodeViewer: React.FC<LuauCodeViewerProps> = ({
     </div>
   );
 };
+

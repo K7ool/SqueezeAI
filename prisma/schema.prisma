@@ -133,3 +133,94 @@ model ApiKey {
   @@index([userId])
   @@map("api_keys")
 }
+
+model StudioSession {
+  id             String   @id @default(cuid())
+  sessionId      String   @unique
+  userId         String?
+  projectId      String
+  projectName    String   @default("Roblox Game")
+  placeId        BigInt?
+  placeName      String?
+  universeId     BigInt?
+  pairingCode    String
+  token          String   @unique
+  status         String   @default("pending_pairing") // pending_pairing, connected, offline, disconnected
+  connectedAt    DateTime?
+  lastHeartbeat  DateTime @default(now())
+  pluginVersion  String   @default("2.5.0")
+  clientIp       String?
+  
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([token])
+  @@map("studio_sessions")
+}
+
+model StudioChangeEvent {
+  id           String   @id @default(cuid())
+  changeId     String   @unique
+  projectId    String
+  sessionId    String?
+  fileId       String
+  path         String
+  className    String   @default("Script")
+  action       String   @default("update") // create, update, delete, rename, move
+  source       String   @db.Text
+  version      Int      @default(1)
+  hash         String
+  author       String   @default("website") // website, studio, ai
+  status       String   @default("pending") // pending, applied, acknowledged, conflict, failed
+  errorMessage String?
+
+  createdAt    DateTime @default(now())
+
+  @@index([projectId])
+  @@index([status])
+  @@map("studio_change_events")
+}
+
+model StudioFileVersion {
+  id         String   @id @default(cuid())
+  projectId  String
+  path       String
+  name       String
+  className  String   @default("Script")
+  parentPath String   @default("ServerScriptService")
+  source     String   @db.Text
+  version    Int      @default(1)
+  hash       String
+  updatedBy  String   @default("website")
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([projectId, path])
+  @@index([projectId])
+  @@map("studio_file_versions")
+}
+
+model StudioConflict {
+  id               String   @id @default(cuid())
+  conflictId       String   @unique
+  projectId        String
+  fileId           String
+  path             String
+  websiteVersion   Int
+  websiteSource    String   @db.Text
+  websiteUpdatedAt DateTime
+  studioVersion    Int
+  studioSource     String   @db.Text
+  studioUpdatedAt  DateTime
+  detectedAt       DateTime @default(now())
+  status           String   @default("open") // open, resolved
+  resolution       String?  // keep_website, keep_studio, manual_merge
+  resolvedAt       DateTime?
+
+  @@index([projectId])
+  @@index([status])
+  @@map("studio_conflicts")
+}
+

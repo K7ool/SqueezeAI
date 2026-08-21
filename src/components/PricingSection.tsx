@@ -1,6 +1,7 @@
 import React from 'react';
 import { User } from '../types';
 import { Check, Sparkles, Zap, ShieldCheck } from 'lucide-react';
+import { sound } from '../utils/audio';
 
 interface PricingSectionProps {
   user: User | null;
@@ -66,6 +67,7 @@ export const PricingSection: React.FC<PricingSectionProps> = ({
   ];
 
   const handlePlanClick = (planId: 'free' | 'pro' | 'studio') => {
+    sound.pop();
     if (!user) {
       onOpenAuth('register');
       return;
@@ -74,11 +76,11 @@ export const PricingSection: React.FC<PricingSectionProps> = ({
   };
 
   return (
-    <section id="pricing" className="py-24 bg-[#FFF8E7] border-t border-b border-[#0B120D]/10">
-      <div className="max-w-[1180px] mx-auto px-6">
+    <section id="pricing" className="py-20 sm:py-24 bg-[#FFF8E7] border-t border-b border-[#0B120D]/10">
+      <div className="max-w-[1280px] mx-auto px-4 sm:px-6">
         
         {/* Section Header */}
-        <div className="max-w-[640px] mb-14">
+        <div className="max-w-[640px] mb-12 sm:mb-14">
           <span className="font-mono text-xs uppercase font-bold tracking-widest text-[#FF6B4A]">
             Pick your size
           </span>
@@ -97,14 +99,14 @@ export const PricingSection: React.FC<PricingSectionProps> = ({
             return (
               <div
                 key={p.id}
-                className={`rounded-3xl p-8 flex flex-col justify-between transition-all duration-200 ${
+                className={`rounded-3xl p-6 sm:p-8 flex flex-col justify-between transition-all duration-300 ${
                   p.featured
-                    ? 'bg-[#0B120D] text-[#FFFDF6] border-2 border-[#0B120D] md:-translate-y-3 shadow-2xl relative'
-                    : 'bg-[#FFFDF6] text-[#0B120D] border border-[#0B120D]/15'
+                    ? 'bg-[#0B120D] text-[#FFFDF6] border-2 border-[#0B120D] md:-translate-y-3 shadow-2xl relative hover:scale-[1.02]'
+                    : 'bg-[#FFFDF6] text-[#0B120D] border border-[#0B120D]/15 hover:border-[#0B120D]/30 hover:shadow-lg'
                 }`}
               >
                 {p.featured && (
-                  <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 px-3 py-1 bg-[#FFC93C] text-[#0B120D] text-xs font-mono font-bold uppercase rounded-full shadow-md">
+                  <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 px-3.5 py-1 bg-[#FFC93C] text-[#0B120D] text-xs font-mono font-bold uppercase rounded-full shadow-md">
                     Most Popular
                   </div>
                 )}
@@ -117,7 +119,7 @@ export const PricingSection: React.FC<PricingSectionProps> = ({
                       {p.name}
                     </span>
                     {isCurrent && (
-                      <span className="px-2 py-0.5 rounded-full bg-[#A8E6B0]/20 text-[#A8E6B0] text-[10px] font-mono font-bold uppercase">
+                      <span className="px-2.5 py-0.5 rounded-full bg-[#A8E6B0]/20 text-[#A8E6B0] text-[10px] font-mono font-bold uppercase">
                         Active
                       </span>
                     )}
@@ -158,10 +160,10 @@ export const PricingSection: React.FC<PricingSectionProps> = ({
                   <button
                     onClick={() => handlePlanClick(p.id)}
                     disabled={isCurrent || isUpgrading}
-                    className={`w-full py-3.5 rounded-full font-bold text-sm transition-all cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${
+                    className={`w-full py-3.5 rounded-full font-bold text-sm transition-all cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed active:scale-95 ${
                       p.featured
                         ? 'btn-squeeze text-[#0B120D]'
-                        : 'bg-transparent border border-[#0B120D]/20 hover:border-[#0B120D] text-[#0B120D]'
+                        : 'bg-transparent border border-[#0B120D]/20 hover:border-[#0B120D] hover:bg-black/5 text-[#0B120D]'
                     }`}
                   >
                     {isCurrent ? 'Current plan' : p.cta}
@@ -182,3 +184,4 @@ export const PricingSection: React.FC<PricingSectionProps> = ({
     </section>
   );
 };
+

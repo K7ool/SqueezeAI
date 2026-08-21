@@ -6,6 +6,7 @@ import {
 import { LuauCodeViewer } from './LuauCodeViewer';
 import { saveSingleScriptToDisk } from '../utils/projectDisk';
 import { formatAndSanitizeLuau } from '../utils/luauFormatter';
+import { sound } from '../utils/audio';
 
 interface CurrentScriptData {
   title?: string;
@@ -71,6 +72,7 @@ print("⚡ [Squeeze AI] Treasure Chest System Active")`;
   const displayCode = currentScript?.code ? formatAndSanitizeLuau(currentScript.code) : defaultDemoCode;
 
   const handleCopyCode = () => {
+    sound.success();
     navigator.clipboard.writeText(displayCode);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -78,15 +80,19 @@ print("⚡ [Squeeze AI] Treasure Chest System Active")`;
   };
 
   const handleDownloadLua = async () => {
+    sound.pop();
     const filename = `${(currentScript?.title || 'TreasureChest').replace(/\s+/g, '_')}.server.luau`;
     const res = await saveSingleScriptToDisk(filename, displayCode);
     if (res.success) {
+      sound.success();
       onShowToast(`Saved ${res.filename} to local disk!`);
+    } else {
+      sound.error();
     }
   };
 
   return (
-    <section className="relative bg-[#142019] text-[#FFFDF6] pt-14 pb-20 overflow-hidden" id="try-it">
+    <section className="relative bg-[#142019] text-[#FFFDF6] pt-12 sm:pt-16 pb-16 sm:pb-24 overflow-hidden" id="try-it">
       {/* Subtle Grid Pattern Background */}
       <div 
         className="absolute inset-0 opacity-30 pointer-events-none"
@@ -98,11 +104,11 @@ print("⚡ [Squeeze AI] Treasure Chest System Active")`;
         }}
       />
 
-      <div className="relative max-w-[1240px] mx-auto px-6 grid grid-cols-1 lg:grid-cols-[1.1fr_0.9fr] gap-10 items-center">
+      <div className="relative max-w-[1280px] mx-auto px-4 sm:px-6 grid grid-cols-1 lg:grid-cols-[1.1fr_0.9fr] gap-8 lg:gap-12 items-center">
         
         {/* Left Column: Studio Headline & Direct Studio Entry Actions */}
         <div>
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#A8E6B0]/15 border border-[#A8E6B0]/30 text-[#A8E6B0] text-xs font-mono font-bold uppercase tracking-wider mb-5">
+          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#A8E6B0]/15 border border-[#A8E6B0]/30 text-[#A8E6B0] text-xs font-mono font-bold uppercase tracking-wider mb-5">
             <span className="w-2 h-2 rounded-full bg-[#A8E6B0] animate-pulse"></span>
             Studio Dashboard 2.0 &middot; Luau Co-pilot
           </div>
@@ -111,29 +117,32 @@ print("⚡ [Squeeze AI] Treasure Chest System Active")`;
             Fresh Luau Scripts, Project Folder Sync &amp; Interactive Idea Maps.
           </h1>
 
-          <p className="text-base text-[#FFFDF6]/80 leading-relaxed mb-6 font-body text-pretty max-w-xl">
+          <p className="text-base sm:text-lg text-[#FFFDF6]/80 leading-relaxed mb-6 font-body text-pretty max-w-xl">
             Connect your local Roblox project folder. Ask your AI co-pilot to build admin commands or read your codebase to map out interconnected mechanics:
           </p>
 
           {/* Interactive Idea Map Flow Preview Bar */}
           <div 
-            onClick={() => onOpenDashboard('ideas')}
-            className="p-3.5 rounded-xl bg-white/5 border border-white/10 hover:border-[#FFC93C]/60 transition-all cursor-pointer mb-6 group"
+            onClick={() => {
+              sound.pop();
+              onOpenDashboard('ideas');
+            }}
+            className="p-3.5 sm:p-4 rounded-xl bg-white/5 border border-white/10 hover:border-[#FFC93C]/60 hover:bg-white/[0.08] active:scale-[0.99] transition-all cursor-pointer mb-6 group shadow-lg"
           >
-            <div className="flex items-center justify-between text-[11px] font-mono text-white/50 mb-2">
-              <span className="flex items-center gap-1 text-[#FFC93C] font-bold">
+            <div className="flex items-center justify-between text-[11px] font-mono text-white/50 mb-2.5">
+              <span className="flex items-center gap-1.5 text-[#FFC93C] font-bold">
                 <Lightbulb className="w-3.5 h-3.5" />
                 Idea Progression Chain
               </span>
               <span className="group-hover:text-white flex items-center gap-1 transition-colors">
-                Launch Map <ChevronRight className="w-3 h-3" />
+                Launch Map <ChevronRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
               </span>
             </div>
 
             <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
               {sampleIdeaChain.map((node, i) => (
                 <React.Fragment key={node.name}>
-                  <div className="px-2.5 py-1 rounded-lg bg-[#161B22] border border-white/15 flex items-center gap-1.5">
+                  <div className="px-2.5 py-1 rounded-lg bg-[#161B22] border border-white/15 flex items-center gap-1.5 group-hover:border-[#FFC93C]/30 transition-colors">
                     <span className="w-1.5 h-1.5 rounded-full bg-[#FFC93C]" />
                     <span className={`font-bold ${node.color}`}>{node.name}</span>
                   </div>
@@ -148,24 +157,33 @@ print("⚡ [Squeeze AI] Treasure Chest System Active")`;
           {/* Main Launch Action Buttons */}
           <div className="flex flex-wrap gap-3">
             <button
-              onClick={() => onOpenDashboard('chat')}
-              className="btn-squeeze px-5 py-3.5 rounded-xl text-sm font-bold flex items-center gap-2 shadow-lg shadow-[#FFC93C]/10 cursor-pointer"
+              onClick={() => {
+                sound.zap();
+                onOpenDashboard('chat');
+              }}
+              className="btn-squeeze px-5 sm:px-6 py-3.5 rounded-xl text-sm sm:text-base font-bold flex items-center gap-2.5 shadow-lg shadow-[#FFC93C]/20 cursor-pointer"
             >
-              <MessageSquare className="w-4 h-4" />
+              <MessageSquare className="w-4 h-4 sm:w-5 sm:h-5" />
               <span>Open AI Chat &amp; Co-Pilot</span>
             </button>
 
             <button
-              onClick={() => onOpenDashboard('files')}
-              className="px-5 py-3.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-mono text-xs font-bold flex items-center gap-2 border border-white/15 transition-all cursor-pointer"
+              onClick={() => {
+                sound.whoosh();
+                onOpenDashboard('files');
+              }}
+              className="px-4 sm:px-5 py-3.5 rounded-xl bg-white/10 hover:bg-white/20 active:scale-95 text-white font-mono text-xs sm:text-sm font-bold flex items-center gap-2 border border-white/15 transition-all cursor-pointer"
             >
               <Folder className="w-4 h-4 text-[#FFC93C]" />
               <span>Open Project Folder</span>
             </button>
 
             <button
-              onClick={() => onOpenDashboard('ideas')}
-              className="px-4 py-3.5 rounded-xl bg-[#161B22] hover:bg-white/10 text-white/90 font-mono text-xs font-bold flex items-center gap-2 border border-white/15 transition-all cursor-pointer"
+              onClick={() => {
+                sound.pop();
+                onOpenDashboard('ideas');
+              }}
+              className="px-4 sm:px-5 py-3.5 rounded-xl bg-[#161B22] hover:bg-white/10 active:scale-95 text-white/90 font-mono text-xs sm:text-sm font-bold flex items-center gap-2 border border-white/15 transition-all cursor-pointer"
             >
               <Lightbulb className="w-4 h-4 text-[#A8E6B0]" />
               <span>Idea Flow Map</span>
@@ -190,7 +208,7 @@ print("⚡ [Squeeze AI] Treasure Chest System Active")`;
         </div>
 
         {/* Right Column: Code Receipt Preview & Quick Actions */}
-        <div className="bg-[#0D1117] rounded-2xl border border-white/15 shadow-2xl overflow-hidden flex flex-col">
+        <div className="bg-[#0D1117] rounded-2xl border border-white/15 shadow-2xl overflow-hidden flex flex-col hover:border-white/25 transition-all">
           
           {/* Header Strip */}
           <div className="px-4 py-3 bg-[#161B22] border-b border-white/10 flex items-center justify-between">
@@ -206,7 +224,7 @@ print("⚡ [Squeeze AI] Treasure Chest System Active")`;
             <div className="flex items-center gap-1.5">
               <button
                 onClick={handleCopyCode}
-                className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-xs text-white/80 transition-all cursor-pointer"
+                className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 active:scale-95 text-xs text-white/80 transition-all cursor-pointer"
                 title="Copy Script"
               >
                 {copied ? <Check className="w-3.5 h-3.5 text-[#A8E6B0]" /> : <Copy className="w-3.5 h-3.5" />}
@@ -214,15 +232,18 @@ print("⚡ [Squeeze AI] Treasure Chest System Active")`;
 
               <button
                 onClick={handleDownloadLua}
-                className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-xs text-white/80 transition-all cursor-pointer"
+                className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 active:scale-95 text-xs text-white/80 transition-all cursor-pointer"
                 title="Save to Disk"
               >
                 <Download className="w-3.5 h-3.5" />
               </button>
 
               <button
-                onClick={() => onOpenDashboard('generator')}
-                className="px-2.5 py-1 rounded-lg bg-[#FFC93C] text-[#0B120D] font-mono text-xs font-bold hover:bg-[#ffe082] transition-all cursor-pointer"
+                onClick={() => {
+                  sound.whoosh();
+                  onOpenDashboard('generator');
+                }}
+                className="px-3 py-1.5 rounded-lg bg-[#FFC93C] text-[#0B120D] font-mono text-xs font-bold hover:bg-[#ffe082] active:scale-95 transition-all cursor-pointer shadow-sm"
               >
                 Open Studio
               </button>
@@ -245,3 +266,4 @@ print("⚡ [Squeeze AI] Treasure Chest System Active")`;
     </section>
   );
 };
+

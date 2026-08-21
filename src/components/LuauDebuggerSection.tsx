@@ -2,7 +2,9 @@ import React, { useState } from 'react';
 import { GeneratedScript } from '../types';
 import { Wrench, Check, Copy, Download, RefreshCw, AlertTriangle, CheckCircle2, HardDrive } from 'lucide-react';
 import { LuauCodeViewer } from './LuauCodeViewer';
+import { MarkdownRenderer } from './MarkdownRenderer';
 import { saveSingleScriptToDisk } from '../utils/projectDisk';
+import { sound } from '../utils/audio';
 
 interface LuauDebuggerSectionProps {
   onDebug: (errorMessage: string, brokenCode?: string) => Promise<GeneratedScript | null>;
@@ -48,24 +50,29 @@ end)`);
   const handleDebugSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!errorMessage.trim() || isLoading) return;
+    sound.zap();
     const res = await onDebug(errorMessage, brokenCode);
     if (res) {
+      sound.success();
       setFixedScript(res);
+    } else {
+      sound.error();
     }
   };
 
   const handlePresetSelect = (preset: typeof errorPresets[0]) => {
+    sound.pop();
     setErrorMessage(preset.error);
     setBrokenCode(preset.code);
     setFixedScript(null);
   };
 
   return (
-    <section id="debugger" className="py-24 bg-[#142019] text-[#FFFDF6] border-b border-white/10">
-      <div className="max-w-[1180px] mx-auto px-6">
+    <section id="debugger" className="py-20 sm:py-24 bg-[#142019] text-[#FFFDF6] border-b border-white/10">
+      <div className="max-w-[1280px] mx-auto px-4 sm:px-6">
         
         {/* Section Header */}
-        <div className="max-w-[640px] mb-12">
+        <div className="max-w-[680px] mb-10 sm:mb-12">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#FF6B4A]/15 border border-[#FF6B4A]/30 text-[#FF6B4A] text-xs font-mono font-bold uppercase tracking-wider mb-3">
             <Wrench className="w-3.5 h-3.5" />
             <span>Instant Studio Debugger</span>
@@ -82,7 +89,7 @@ end)`);
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
           
           {/* Left Column: Error Input Form */}
-          <div className="bg-[#1D2E24] border border-white/10 rounded-2xl p-6 shadow-xl">
+          <div className="bg-[#1D2E24] border border-white/10 rounded-2xl p-5 sm:p-6 shadow-xl">
             <div className="text-xs font-mono font-bold uppercase text-[#FF6B4A] mb-3 flex items-center gap-2">
               <AlertTriangle className="w-4 h-4" />
               <span>Paste Studio Output Error</span>
@@ -95,7 +102,7 @@ end)`);
                   key={idx}
                   type="button"
                   onClick={() => handlePresetSelect(preset)}
-                  className="text-xs font-mono px-3 py-1.5 rounded-lg border border-white/15 bg-white/5 text-[#FFFDF6]/70 hover:text-[#FFC93C] hover:border-[#FFC93C] transition-all cursor-pointer"
+                  className="text-xs font-mono px-3 py-1.5 rounded-lg border border-white/15 bg-white/5 text-[#FFFDF6]/70 hover:text-[#FFC93C] hover:border-[#FFC93C] hover:bg-white/10 active:scale-95 transition-all cursor-pointer"
                 >
                   {preset.label}
                 </button>
@@ -132,7 +139,7 @@ end)`);
               <button
                 type="submit"
                 disabled={isLoading || !errorMessage.trim()}
-                className="w-full btn-squeeze font-bold text-sm py-3.5 rounded-xl flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                className="w-full btn-squeeze font-bold text-sm py-3.5 rounded-xl flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 active:scale-98 transition-all"
               >
                 {isLoading ? (
                   <>
@@ -150,19 +157,19 @@ end)`);
           </div>
 
           {/* Right Column: Fixed Output Window */}
-          <div className="bg-[#1D2E24] border border-white/10 rounded-2xl p-4 shadow-xl flex flex-col min-h-[440px]">
+          <div className="bg-[#1D2E24] border border-white/10 rounded-2xl p-4 sm:p-5 shadow-xl flex flex-col min-h-[440px]">
             {isLoading ? (
               <div className="h-72 flex flex-col items-center justify-center gap-3 text-[#FFFDF6]/50 italic font-mono">
                 <div className="w-7 h-7 border-2 border-white/20 border-t-[#FFC93C] rounded-full animate-spin" />
                 <span>Identifying failure point &amp; writing typed Luau resolution…</span>
               </div>
             ) : fixedScript ? (
-              <div className="space-y-4">
+              <div className="space-y-4 animate-in fade-in duration-300">
                 <div className="p-3.5 rounded-xl bg-[#A8E6B0]/10 border border-[#A8E6B0]/30 text-[#A8E6B0] text-xs leading-relaxed flex items-start gap-2.5 font-mono">
                   <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
-                  <div>
-                    <span className="font-bold block mb-0.5 text-[#FFFDF6]">Diagnosis &amp; Fix:</span>
-                    <span>{fixedScript.explanation}</span>
+                  <div className="flex-1 min-w-0">
+                    <span className="font-bold block mb-1 text-[#FFFDF6]">Diagnosis &amp; Fix:</span>
+                    <MarkdownRenderer content={fixedScript.explanation} theme="dark" className="text-xs text-[#A8E6B0]" />
                   </div>
                 </div>
 
@@ -194,3 +201,4 @@ end)`);
     </section>
   );
 };
+

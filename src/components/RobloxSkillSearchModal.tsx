@@ -4,6 +4,7 @@ import {
   Layers, Filter, ChevronRight, X, Terminal, Cpu, ShieldCheck
 } from 'lucide-react';
 import { RobloxSkillCitation } from '../types/project';
+import { sound } from '../utils/audio';
 
 interface RobloxSkillSearchModalProps {
   isOpen: boolean;
@@ -64,6 +65,7 @@ export const RobloxSkillSearchModal: React.FC<RobloxSkillSearchModalProps> = ({
   });
 
   const handleCopyCode = (code: string, id: string) => {
+    sound.success();
     navigator.clipboard.writeText(code);
     setCopiedSnippetId(id);
     setTimeout(() => setCopiedSnippetId(null), 2000);
@@ -83,7 +85,7 @@ export const RobloxSkillSearchModal: React.FC<RobloxSkillSearchModalProps> = ({
             </div>
             <div>
               <h2 className="text-base sm:text-lg font-bold font-display text-[#FFFDF6] flex items-center gap-2">
-                Roblox Skills & Engine Knowledge Hub
+                Roblox Skills &amp; Engine Knowledge Hub
                 <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-[#A8E6B0]/15 text-[#A8E6B0] border border-[#A8E6B0]/30">
                   Creator Hub Grounded
                 </span>
@@ -95,8 +97,11 @@ export const RobloxSkillSearchModal: React.FC<RobloxSkillSearchModalProps> = ({
           </div>
 
           <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg text-white/50 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+            onClick={() => {
+              sound.click();
+              onClose();
+            }}
+            className="p-1.5 rounded-lg text-white/50 hover:text-white hover:bg-white/10 active:scale-95 transition-colors cursor-pointer"
             title="Close"
           >
             <X className="w-5 h-5" />
@@ -124,8 +129,11 @@ export const RobloxSkillSearchModal: React.FC<RobloxSkillSearchModalProps> = ({
             {categories.map(cat => (
               <button
                 key={cat}
-                onClick={() => setSelectedCategory(cat)}
-                className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                onClick={() => {
+                  sound.pop();
+                  setSelectedCategory(cat);
+                }}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold whitespace-nowrap active:scale-95 transition-all cursor-pointer ${
                   selectedCategory === cat
                     ? 'bg-[#FFC93C] text-[#0B120D]'
                     : 'bg-[#161B22] text-white/70 hover:bg-white/10 hover:text-white border border-white/10'
@@ -151,12 +159,13 @@ export const RobloxSkillSearchModal: React.FC<RobloxSkillSearchModalProps> = ({
                 <p>No matching skills found for "{searchQuery}".</p>
                 <button
                   onClick={() => {
+                    sound.zap();
                     onSelectSkillForPrompt(`Explain how to implement ${searchQuery} in Roblox Luau`);
                     onClose();
                   }}
-                  className="px-3 py-1.5 rounded-lg bg-[#FFC93C]/20 text-[#FFC93C] text-xs font-bold font-mono hover:bg-[#FFC93C]/30 transition-all cursor-pointer"
+                  className="px-3 py-1.5 rounded-lg bg-[#FFC93C]/20 text-[#FFC93C] text-xs font-bold font-mono hover:bg-[#FFC93C]/30 active:scale-95 transition-all cursor-pointer"
                 >
-                  ⚡ Ask Copilot to Search & Build "{searchQuery}"
+                  ⚡ Ask Copilot to Search &amp; Build "{searchQuery}"
                 </button>
               </div>
             ) : (
@@ -165,7 +174,10 @@ export const RobloxSkillSearchModal: React.FC<RobloxSkillSearchModalProps> = ({
                 return (
                   <div
                     key={skill.id}
-                    onClick={() => setSelectedSkill(skill)}
+                    onClick={() => {
+                      sound.pop();
+                      setSelectedSkill(skill);
+                    }}
                     className={`p-3 rounded-xl border text-left cursor-pointer transition-all ${
                       isSelected
                         ? 'bg-white/10 border-[#FFC93C] shadow-sm shadow-[#FFC93C]/10'
@@ -246,7 +258,7 @@ export const RobloxSkillSearchModal: React.FC<RobloxSkillSearchModalProps> = ({
                       </span>
                       <button
                         onClick={() => handleCopyCode(selectedSkill.luauSnippet!, selectedSkill.id)}
-                        className="flex items-center gap-1 px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-white text-[11px] transition-colors cursor-pointer"
+                        className="flex items-center gap-1 px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 active:scale-95 text-white text-[11px] transition-colors cursor-pointer"
                       >
                         {copiedSnippetId === selectedSkill.id ? (
                           <>
@@ -290,23 +302,25 @@ export const RobloxSkillSearchModal: React.FC<RobloxSkillSearchModalProps> = ({
               <div className="mt-6 pt-4 border-t border-white/10 flex flex-wrap items-center justify-end gap-2.5">
                 <button
                   onClick={() => {
+                    sound.whoosh();
                     onSelectSkillForPrompt(`Explain in detail how to use ${selectedSkill.title} in my Roblox game`);
                     onClose();
                   }}
-                  className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-bold font-mono transition-all cursor-pointer"
+                  className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/15 active:scale-95 text-white text-xs font-bold font-mono transition-all cursor-pointer"
                 >
                   💬 Ask Question
                 </button>
 
                 <button
                   onClick={() => {
+                    sound.zap();
                     onExecuteSkillAction(
                       selectedSkill.title, 
                       `Build and implement the ${selectedSkill.title} system for my game with --!strict typing, complete logic, and write it to my project files.`
                     );
                     onClose();
                   }}
-                  className="btn-squeeze px-4 py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 cursor-pointer shadow-lg shadow-[#FFC93C]/20"
+                  className="btn-squeeze px-4 py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 cursor-pointer shadow-lg shadow-[#FFC93C]/20 active:scale-95"
                 >
                   <Zap className="w-4 h-4 fill-current" />
                   <span>⚡ Do It For Me (Build System)</span>
@@ -319,3 +333,4 @@ export const RobloxSkillSearchModal: React.FC<RobloxSkillSearchModalProps> = ({
     </div>
   );
 };
+

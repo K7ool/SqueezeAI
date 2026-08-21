@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { X, Copy, Check, ExternalLink, ShieldCheck, Terminal, Download } from 'lucide-react';
+import { sound } from '../utils/audio';
 
 interface RobloxStudioModalProps {
   isOpen: boolean;
@@ -41,13 +42,14 @@ end
 return SqueezeModule`;
 
   const handleCopy = () => {
+    sound.success();
     navigator.clipboard.writeText(injectorCode);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
       <div className="bg-[#FFFDF6] text-[#0B120D] w-full max-w-2xl rounded-3xl border border-[#0B120D]/15 shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
         
         {/* Header */}
@@ -63,8 +65,11 @@ return SqueezeModule`;
           </div>
 
           <button
-            onClick={onClose}
-            className="p-1.5 rounded-full hover:bg-white/10 text-[#FFFDF6]/70 hover:text-white transition-colors cursor-pointer"
+            onClick={() => {
+              sound.click();
+              onClose();
+            }}
+            className="p-1.5 rounded-full hover:bg-white/10 text-[#FFFDF6]/70 hover:text-white active:scale-95 transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -128,7 +133,7 @@ return SqueezeModule`;
               <div className="relative bg-[#142019] text-[#FFFDF6] rounded-xl p-3.5 font-mono text-xs overflow-x-auto">
                 <button
                   onClick={handleCopy}
-                  className="absolute top-2.5 right-2.5 px-2 py-1 bg-white/10 hover:bg-[#FFC93C] hover:text-[#0B120D] text-[#FFFDF6] rounded text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer"
+                  className="absolute top-2.5 right-2.5 px-2 py-1 bg-white/10 hover:bg-[#FFC93C] hover:text-[#0B120D] active:scale-95 text-[#FFFDF6] rounded text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer"
                 >
                   {copied ? <Check className="w-3 h-3 text-[#A8E6B0]" /> : <Copy className="w-3 h-3" />}
                   <span>{copied ? 'Copied' : 'Copy'}</span>
@@ -147,8 +152,11 @@ return SqueezeModule`;
         <div className="px-6 py-4 bg-[#FFF8E7] border-t border-[#0B120D]/10 flex items-center justify-between text-xs font-mono">
           <span className="text-[#0B120D]/60">Squeeze Studio SDK v1.4</span>
           <button
-            onClick={onClose}
-            className="btn-squeeze font-bold text-xs px-5 py-2 rounded-full cursor-pointer"
+            onClick={() => {
+              sound.click();
+              onClose();
+            }}
+            className="btn-squeeze font-bold text-xs px-5 py-2 rounded-full cursor-pointer active:scale-95"
           >
             Got it, thanks
           </button>

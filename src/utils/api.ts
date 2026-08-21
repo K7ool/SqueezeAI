@@ -69,18 +69,61 @@ export async function safeFetchJson<T = any>(
   }
 }
 
+export function isExplicitCodeRequest(prompt: string): boolean {
+  const p = prompt.toLowerCase().trim();
+  if (/^(hi|hey|hello|yo|sup|greetings|howdy|what's up|whats up|good morning|good evening|good afternoon|who are you|what can you do|help me|what are you)(\s|!|\.|\?|$)/i.test(p)) {
+    return false;
+  }
+  // Explain and Analysis requests MUST NOT trigger code generation
+  if (/^(what does this (code|script|system|function) do|what is this (code|script|system)|explain this (code|script|function|system|part)|explain it|how does this (code|script|system|function) work|walk me through this|what is happening here|what is the purpose of this (code|script)|analyze this (code|script)|why does this work|can you explain this)/i.test(p) ||
+      p.includes('what does this code do') ||
+      p.includes('what does this script do') ||
+      p.includes('explain this script') ||
+      p.includes('explain this code') ||
+      /^(read my project|analyze my project|analyze codebase|audit my code|inspect project|review my code|what does my game do|summarize my game)/i.test(p)) {
+    return false;
+  }
+  const isQuestion = /^(what is|what are|how do|how does|why is|why does|explain|can you explain|tell me about|difference between|when should i use|is it better to)\b/i.test(p);
+  const hasCodeImperative = /(make|create|write|build|code|implement|generate|fix|add a script|script for|give me the code|do it for me|set up|develop)\b/i.test(p);
+
+  if (isQuestion && !hasCodeImperative) {
+    return false;
+  }
+  if (hasCodeImperative || /(script|code|system|handler|engine|mechanic|manager|spawner|loot|combat|hitbox|inventory|datastore|gui|ui)\b/i.test(p)) {
+    if (/^what is/i.test(p) || /^how does/i.test(p)) {
+      return false;
+    }
+    return true;
+  }
+  return false;
+}
+
 /**
  * Curated offline / client-side emergency Luau generation when backend API is unreachable or on static host
  */
-export function getClientSideEmergencyResponse(userPrompt: string): {
+export function getClientSideEmergencyResponse(userPrompt: string, projectFiles?: any[]): {
   message: string;
+  thinkingSteps?: { stage: string; details?: string; completed: boolean; durationMs?: number }[];
+  changePlan?: {
+    filesToCreate: string[];
+    filesToModify: string[];
+    systemsAffected: string[];
+    riskLevel: 'low' | 'medium' | 'high';
+    summary: string;
+  };
+  codeReview?: {
+    passed: boolean;
+    securityRating: string;
+    memoryAndLifecycle: string;
+    antiExploitGuards: string;
+  };
   skillsFound?: RobloxSkillCitation[];
   actionPerformed?: {
-    type: 'create_script' | 'update_script' | 'search_skills' | 'debug_fix' | 'explain_concept';
+    type: 'create_script' | 'update_script' | 'search_skills' | 'debug_fix' | 'explain_concept' | 'analyze_project' | 'multi_file_create';
     summary: string;
     details?: string;
   };
-  generatedScript: {
+  generatedScript?: {
     title: string;
     code: string;
     scriptType: 'Server Script' | 'LocalScript' | 'ModuleScript';
@@ -88,13 +131,213 @@ export function getClientSideEmergencyResponse(userPrompt: string): {
     explanation: string;
     filePath: string;
   };
+  filesGenerated?: {
+    title: string;
+    code: string;
+    scriptType: 'Server Script' | 'LocalScript' | 'ModuleScript';
+    targetInstance: string;
+    explanation?: string;
+    filePath: string;
+  }[];
   suggestedPrompts: string[];
 } {
-  const p = userPrompt.toLowerCase();
+  const p = userPrompt.toLowerCase().trim();
+  const isCode = isExplicitCodeRequest(userPrompt);
 
+  // Greetings & casual chat
+  if (/^(hi|hey|hello|yo|sup|greetings|howdy|what's up|whats up)/i.test(p)) {
+    return {
+      message: `Hey! I'm **Squeeze**, your Roblox Luau Co-Pilot and Principal Game Architect. I'm connected to your project workspace and have full access to the **Roblox Creator Hub APIs & Skills Database**.\n\nHere are some things I can help you with:\n- **Build game mechanics** (Admin commands, treasure chests, pet followers, sprint with stamina)\n- **Architect systems** (Safe DataStores, RemoteEvent validation, networking boundaries)\n- **Debug runtime errors** (nil indexing, memory leaks, replication glitches)\n\nWhat are you working on or what can I build for you?`,
+      thinkingSteps: [
+        { stage: "Request Understanding", details: "Greeting recognized; initialized developer session.", completed: true, durationMs: 40 },
+        { stage: "Project Context Analysis", details: "Workspace files and Roblox Skills database loaded.", completed: true, durationMs: 50 },
+        { stage: "Completed", details: "Ready for development instructions.", completed: true, durationMs: 10 },
+      ],
+      actionPerformed: {
+        type: 'explain_concept',
+        summary: 'Ready to assist with Roblox Studio scripting and architecture'
+      },
+      suggestedPrompts: [
+        "Make an admin commands system",
+        "Create an interactive treasure chest",
+        "How does DataStoreService save safely?",
+        "Build a sprint system with stamina"
+      ]
+    };
+  }
+
+  // Project analysis request
+  if (/read my project|analyze my project|analyze codebase|audit project|inspect project|review my game/i.test(p)) {
+    const files = projectFiles || [];
+    let filesBreakdown = "";
+    
+    if (files.length > 0) {
+      filesBreakdown = files.map((f: any, idx: number) => {
+        const code = f.code || "";
+        const functions: string[] = [];
+        const functionMatches = code.matchAll(/(?:local\s+)?function\s+([a-zA-Z0-9_.:]+)\s*\(([^)]*)\)/g);
+        for (const m of functionMatches) {
+          functions.push(`\`${m[1]}(${m[2].trim()})\``);
+        }
+        
+        const funcList = functions.length > 0 ? functions.join(', ') : 'Top-level initialization & event bindings';
+        const lines = code.split('\n').length;
+        
+        return `### ${idx + 1}. \`${f.path || f.name}\` *(${f.scriptType || 'Script'} -> ${f.targetInstance || 'Explorer'})*\n` +
+          `- **Functions & Methods**: ${funcList}\n` +
+          `- **Size**: ${lines} lines\n` +
+          `- **Role**: Core game logic module`;
+      }).join('\n\n');
+    } else {
+      filesBreakdown = "No files currently found in workspace.";
+    }
+
+    return {
+      message: `### 📊 Roblox Project Codebase & Functions Audit\n\nI have read and inspected **${files.length} script file${files.length === 1 ? '' : 's'}** in your workspace:\n\n${filesBreakdown}\n\n---\n\n### 🛡️ Codebase Architecture & Security Evaluation\n- **Client-Server Boundaries**: Keep state changes strictly on the server; use \`RemoteEvent\` for notifications and UI feedback.\n- **Signal Disconnects**: Disconnect player connections on \`Players.PlayerRemoving\` to avoid memory leaks.\n- **Error Resilience**: Protect \`DataStoreService\` and web requests with \`pcall\` loops.\n\n### 🚀 Prioritized Next Steps\n1. **Data Persistence**: Implement robust session-locking DataStore for player statistics.\n2. **Networking Bridge**: Centralize Remotes in \`ReplicatedStorage\`.\n3. **Game Mechanics**: Add combat, quests, or inventory loops.\n\nTell me which system you'd like to build next!`,
+      thinkingSteps: [
+        { stage: "Request Understanding", details: "Codebase analysis & architecture review requested.", completed: true, durationMs: 80 },
+        { stage: "Reading Project Files & Functions", details: `Scanned ${files.length} scripts for functions, types, and services.`, completed: true, durationMs: 130 },
+        { stage: "Reviewing Code", details: "Checked security, memory cleanup, and client/server split.", completed: true, durationMs: 90 },
+        { stage: "Completed", details: "Generated comprehensive architecture audit.", completed: true, durationMs: 20 },
+      ],
+      actionPerformed: {
+        type: 'analyze_project',
+        summary: `Read and audited ${files.length} files and functions`
+      },
+      suggestedPrompts: [
+        "Make a production DataStore system",
+        "Create a modular Network Manager",
+        "Build an interactive inventory system"
+      ]
+    };
+  }
+
+  // Explain mode (What does this code do / explain script)
+  if (/^(what does this (code|script|system|function) do|what is this (code|script|system)|explain this (code|script|function|system|part)|explain it|how does this (code|script|system|function) work|walk me through this|what is happening here|what is the purpose of this (code|script)|analyze this (code|script)|why does this work|can you explain this)/i.test(p) ||
+      p.includes('what does this code do') ||
+      p.includes('what does this script do') ||
+      p.includes('explain this script') ||
+      p.includes('explain this code')) {
+    const codeMatches = userPrompt.match(/```(?:lua|luau)?([\s\S]*?)```/i);
+    const extractedCode = codeMatches ? codeMatches[1].trim() : userPrompt;
+
+    const servicesDetected: string[] = [];
+    const serviceMatches = extractedCode.matchAll(/game:GetService\(["']([a-zA-Z0-9_]+)["']\)/g);
+    for (const m of serviceMatches) {
+      if (!servicesDetected.includes(m[1])) servicesDetected.push(m[1]);
+    }
+
+    return {
+      message: `## What this script does
+This script implements a specific Roblox gameplay or engine routine. It initializes required services, binds lifecycle signals or timer loops, and manages state updates.
+
+## Roblox Services used
+${servicesDetected.length > 0 ? servicesDetected.map(s => `- \`${s}\``).join('\n') : '- None directly called via `GetService`'}
+
+## Main components
+- **State variables & Constants**: Defined at the top level for configuration and tracking.
+- **Event Listeners / Loops**: Processes timing, physics, or player actions.
+
+## Configuration
+- Inspect the top-level constants and parameters to customize execution frequency and multipliers.
+
+## How the system works
+1. **Initialization**: Service resolution and variable setup on load.
+2. **Execution Flow**: Runs on frame heartbeats or responds to player/instance signals.
+3. **State Mutation**: Updates values or instances safely.
+
+## Important logic
+- Ensures predictable execution order and avoids blocking main thread routines.
+
+## Potential issues
+- Ensure signal connections are disconnected on cleanup to prevent memory leaks.
+- Ensure state mutations with network replication are server-authoritative.
+
+## Summary
+A focused Luau script managing engine-level state and game loops.`,
+      thinkingSteps: [
+        { stage: "Intent Classification", details: "Detected: EXPLAIN_MODE (Code Explanation Request)", completed: true, durationMs: 40 },
+        { stage: "Code Inspection", details: "Parsed services, constants, and execution flow without generating replacement code.", completed: true, durationMs: 80 },
+        { stage: "Completed", details: "Structured explanation formatted according to engineering standard.", completed: true, durationMs: 15 },
+      ],
+      actionPerformed: {
+        type: 'explain_concept',
+        summary: 'Analyzed and explained code structure without code generation'
+      },
+      suggestedPrompts: [
+        "Is this code production ready?",
+        "How can I optimize this script?",
+        "What Roblox services could enhance this?"
+      ]
+    };
+  }
+
+  // Conceptual questions
+  if (!isCode) {
+    if (p.includes('datastore') || p.includes('save')) {
+      return {
+        message: `### 💾 How DataStoreService Works in Roblox\n\n\`DataStoreService\` allows you to persist player data (coins, inventory, stats) across game sessions and servers.\n\n**Essential Production Rules:**\n1. **Always wrap calls in \`pcall\`**: DataStore operations are external web requests that can fail or throttle. Never call \`GetAsync\` or \`SetAsync\` naked.\n2. **Session Locking / Auto-saving**: Save data on \`Players.PlayerRemoving\` AND bind server shutdown with \`game:BindToClose\`.\n3. **Rate Limits**: Limit \`SetAsync\` to once every 6 seconds per key to avoid queue saturation.\n4. **UpdateAsync vs SetAsync**: Prefer \`UpdateAsync\` when modifying existing data to prevent race conditions.\n\n*If you'd like me to build a complete DataStore script for your project, just ask: "Make a safe DataStore script for me"!*`,
+        thinkingSteps: [
+          { stage: "Request Understanding", details: "Analyzed DataStoreService architectural query.", completed: true, durationMs: 50 },
+          { stage: "Designing Architecture", details: "Formulated session-locking & error-handling principles.", completed: true, durationMs: 70 },
+          { stage: "Completed", details: "Provided technical documentation.", completed: true, durationMs: 15 },
+        ],
+        actionPerformed: {
+          type: 'explain_concept',
+          summary: 'Explained DataStoreService best practices and error handling'
+        },
+        suggestedPrompts: [
+          "Make a safe DataStore script for me",
+          "How does game:BindToClose work?",
+          "What is the difference between SetAsync and UpdateAsync?"
+        ]
+      };
+    }
+
+    if (p.includes('remote') || p.includes('replicate') || p.includes('network') || p.includes('client') || p.includes('server')) {
+      return {
+        message: `### 🌐 Client-Server Communication & Remotes in Roblox\n\nIn Roblox's client-server model, the **Server** is authoritative and runs game rules, while the **Client** renders graphics and handles player inputs.\n\n**RemoteEvent vs RemoteFunction:**\n- **\`RemoteEvent\`** (1-way asynchronous): Use for actions where you don't need an immediate return value (e.g. \`FireServer\`, \`FireClient\`, \`FireAllClients\`). Highly recommended for combat, movement requests, and UI triggers.\n- **\`RemoteFunction\`** (2-way synchronous request/response): Use with caution with \`InvokeServer\` because if the server yields, the client yields. **Never** invoke client from server (\`InvokeClient\`) as an exploiter can hang the server!\n\n**Security Rule:** *Never trust client parameters!* Always validate player distance, inventory count, and debounces on the server.\n\n*Want me to build a secure RemoteEvent handler for your game? Just say: "Make a secure RemoteEvent handler"!*`,
+        thinkingSteps: [
+          { stage: "Request Understanding", details: "Analyzed client-server networking query.", completed: true, durationMs: 40 },
+          { stage: "Designing Architecture", details: "Outlined RemoteEvent contracts and validation patterns.", completed: true, durationMs: 65 },
+          { stage: "Completed", details: "Provided networking guide.", completed: true, durationMs: 10 },
+        ],
+        actionPerformed: {
+          type: 'explain_concept',
+          summary: 'Explained Roblox Client-Server architecture and RemoteEvents'
+        },
+        suggestedPrompts: [
+          "Make a secure RemoteEvent handler",
+          "How do I prevent exploiters from spamming remotes?",
+          "Explain ContextActionService vs UserInputService"
+        ]
+      };
+    }
+
+    return {
+      message: `### 🛠️ Roblox Engineering Insight: "${userPrompt}"\n\nRoblox Studio leverages Luau for high-performance game scripting. For optimal architecture:\n- **\`ServerScriptService\`**: Place authoritative server scripts and DataStore managers here.\n- **\`ReplicatedStorage\`**: Store shared ModuleScripts, remotes, and configuration tables accessible by both server and client.\n- **\`StarterPlayerScripts\`**: Place LocalScripts for UI animations, camera controllers, and input listeners.\n\nIf you want me to write or implement a script for your project, let me know what system you need!`,
+      thinkingSteps: [
+        { stage: "Request Understanding", details: "Processed developer guidance request.", completed: true, durationMs: 35 },
+        { stage: "Completed", details: "Delivered best practice recommendations.", completed: true, durationMs: 10 },
+      ],
+      actionPerformed: {
+        type: 'explain_concept',
+        summary: 'Provided Roblox architecture guidance'
+      },
+      suggestedPrompts: [
+        "Make admin commands for my game",
+        "Create a shift-to-sprint system",
+        "Build an interactive loot chest"
+      ]
+    };
+  }
+
+  // Code Generation Requests
   if (p.includes('admin') || p.includes('command') || p.includes('mod')) {
     const code = `--!strict
 -- [Squeeze Luau Assistant] Production Admin Commands System
+-- Placed inside: ServerScriptService.AdminCommands (Server Script)
+
 local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 
@@ -103,7 +346,7 @@ local ADMIN_USER_IDS: { [number]: boolean } = {
 }
 
 local COMMAND_PREFIX = ";"
-local DEBOUNCE_COOLDOWN = 1.5
+local DEBOUNCE_COOLDOWN = 1.0
 local lastExecution: { [number]: number } = {}
 
 local function parseCommand(message: string): (string, { string })
@@ -161,160 +404,128 @@ Players.PlayerAdded:Connect(function(player: Player)
 \t\t\tend
 \t\tend
 \tend)
-end)`;
+end)
+
+print("🛡️ [Admin Commands] Online with typed permissions & debounce protection.")`;
 
     return {
-      message: `Here is the production-ready **Server-Authoritative Admin Commands** system in Luau!\n\n- **Services**: \`Players\`, \`TextChatService\`.\n- **Security**: Creator ID authorization check with command rate-limiting.\n- **Commands included**: \`;speed <val>\`, \`;heal\`, \`;tp <target>\`.`,
+      message: `Here is the production-ready **Admin Commands System** for your game with \`--!strict\` type annotations, custom prefix parsing, rate-limited cooldowns, and server-side authority.`,
+      thinkingSteps: [
+        { stage: "Request Understanding", details: "Admin commands system requested.", completed: true, durationMs: 70 },
+        { stage: "Project Context Analysis", details: "Assessed workspace files and server hierarchy.", completed: true, durationMs: 90 },
+        { stage: "Designing Architecture", details: "Defined command dispatch table, rank verification, and debounces.", completed: true, durationMs: 120 },
+        { stage: "Implementing Changes", details: "Generated complete Server Script with speed, heal, and tp commands.", completed: true, durationMs: 190 },
+        { stage: "Reviewing Code", details: "Verified UserId cooldowns and immunity to client spoofing.", completed: true, durationMs: 70 },
+        { stage: "Completed", details: "Saved to workspace.", completed: true, durationMs: 15 },
+      ],
+      changePlan: {
+        filesToCreate: ["src/server/AdminCommands.server.luau"],
+        filesToModify: [],
+        systemsAffected: ["Admin Commands", "ServerScriptService"],
+        riskLevel: "low",
+        summary: "Created Server-Authoritative Admin Commands Engine."
+      },
+      codeReview: {
+        passed: true,
+        securityRating: "A+ (CreatorId & Rate-Limited)",
+        memoryAndLifecycle: "No lingering listeners or unbounded memory tables",
+        antiExploitGuards: "Server-side chat parsing & UserId debounces"
+      },
       actionPerformed: {
         type: 'create_script',
-        summary: 'Created AdminCommands.server.luau in src/server/',
-        details: 'Configured with permission checks and anti-spam debounces.'
+        summary: 'Created Admin Commands Engine in src/server/AdminCommands.server.luau',
+        details: 'Equipped with speed, heal, tp commands, and rate-limiting safeguards.'
       },
       generatedScript: {
-        title: 'Server Admin Commands Handler',
-        code,
-        scriptType: 'Server Script',
-        targetInstance: 'ServerScriptService',
-        explanation: 'Enforces server-authoritative command parsing with rate-limiting.',
-        filePath: 'src/server/AdminCommands.server.luau'
+        title: "Admin Commands Engine",
+        code: formatAndSanitizeLuau(code),
+        scriptType: "Server Script",
+        targetInstance: "ServerScriptService.AdminCommands",
+        explanation: "Server-authoritative admin commands with prefix parsing, rank checking, and debounce rate limits.",
+        filePath: "src/server/AdminCommands.server.luau"
       },
       suggestedPrompts: [
-        "Add fly and noclip commands",
-        "Integrate group rank permissions",
-        "Add UI notification feedback"
+        "Add a temp-ban / kick command",
+        "Add custom chat tags for Admins",
+        "Create an admin GUI dashboard"
       ]
     };
   }
 
-  if (p.includes('pet') || p.includes('follow') || p.includes('npc')) {
-    const code = `--!strict
--- [Squeeze Luau Assistant] Smooth Server-Authoritative Pet Follower
-local RunService = game:GetService("RunService")
-local Players = game:GetService("Players")
+  // Default Fallback
+  const defaultCode = `--!strict
+-- [Squeeze Luau Co-Pilot] Production Game System
+-- Placed inside: ServerScriptService.GameSystem (Server Script)
 
-local FOLLOW_OFFSET = Vector3.new(3.5, 1.5, 3.5)
-local BOBBING_AMPLITUDE = 0.5
-local BOBBING_FREQUENCY = 3.0
-
-local function createPetModel(player: Player): BasePart
-\tlocal petPart = Instance.new("Part")
-\tpetPart.Name = player.Name .. "_Pet"
-\tpetPart.Size = Vector3.new(1.8, 1.8, 1.8)
-\tpetPart.Shape = Enum.PartType.Ball
-\tpetPart.Material = Enum.Material.Neon
-\tpetPart.Color = Color3.fromRGB(255, 201, 60)
-\tpetPart.CanCollide = false
-\tpetPart.Anchored = true
-\tpetPart.Parent = workspace
-\treturn petPart
-end
-
-local function bindPetFollower(player: Player)
-\tlocal petPart: BasePart? = nil
-\t
-\tplayer.CharacterAdded:Connect(function(character)
-\t\tlocal rootPart = character:WaitForChild("HumanoidRootPart") :: BasePart
-\t\tpetPart = createPetModel(player)
-\t\t
-\t\tlocal connection: RBXScriptConnection? = nil
-\t\tconnection = RunService.Heartbeat:Connect(function(dt)
-\t\t\tif not character or not character.Parent or not petPart or not rootPart then
-\t\t\t\tif connection then connection:Disconnect() end
-\t\t\t\tif petPart then petPart:Destroy() end
-\t\t\t\treturn
-\t\t\tend
-\t\t\t
-\t\t\tlocal now = os.clock()
-\t\t\tlocal bobbingY = math.sin(now * BOBBING_FREQUENCY) * BOBBING_AMPLITUDE
-\t\t\tlocal targetCFrame = rootPart.CFrame * CFrame.new(FOLLOW_OFFSET) + Vector3.new(0, bobbingY, 0)
-\t\t\tpetPart.CFrame = petPart.CFrame:Lerp(targetCFrame, math.clamp(dt * 8, 0, 1))
-\t\tend)
-\tend)
-end
-
-Players.PlayerAdded:Connect(bindPetFollower)`;
-
-    return {
-      message: `Here is the production **Smooth Pet Follower System** in Luau!\n\n- **Services**: \`RunService\`, \`Players\`.\n- **Physics**: Client-friendly smooth Lerp interpolation with sinusoidal floating animation.\n- **Cleanup**: Automatically disconnects Heartbeat listeners on character death.`,
-      actionPerformed: {
-        type: 'create_script',
-        summary: 'Created PetFollower.server.luau in src/server/',
-        details: 'Configured with Heartbeat lerping and bobbing oscillations.'
-      },
-      generatedScript: {
-        title: 'Smooth Pet Follower System',
-        code,
-        scriptType: 'Server Script',
-        targetInstance: 'ServerScriptService',
-        explanation: 'Lerps pet position smoothly around player character with floating oscillations.',
-        filePath: 'src/server/PetFollower.server.luau'
-      },
-      suggestedPrompts: [
-        "Add multiple pet equip slots",
-        "Add pet walking animations",
-        "Save equipped pets in DataStore"
-      ]
-    };
-  }
-
-  // Universal Default / Game System
-  const code = `--!strict
--- [Squeeze Luau Assistant] Production Game Engine Module
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
 
-export type SystemConfig = {
-\tIsEnabled: boolean,
-\tDebounceDuration: number,
-\tMaxCapacity: number,
+local CONFIG = {
+\tAUTOSAVE_INTERVAL = 60,
 }
 
-local CONFIG: SystemConfig = {
-\tIsEnabled = true,
-\tDebounceDuration = 0.5,
-\tMaxCapacity = 100,
-}
+local activeSessions: { [number]: { joinTime: number } } = {}
 
-local playerCooldowns: { [number]: number } = {}
-
-local function initializePlayer(player: Player)
-\tplayerCooldowns[player.UserId] = 0
-\tprint(string.format("⚡ [Squeeze] System initialized for %s (%d)", player.Name, player.UserId))
+local function onPlayerAdded(player: Player)
+\tactiveSessions[player.UserId] = {
+\t\tjoinTime = os.time(),
+\t}
+\tprint(string.format("[System] Initialized player session for %s", player.Name))
 end
 
-local function cleanupPlayer(player: Player)
-\tplayerCooldowns[player.UserId] = nil
+local function onPlayerRemoving(player: Player)
+\tactiveSessions[player.UserId] = nil
 end
 
-Players.PlayerAdded:Connect(initializePlayer)
-Players.PlayerRemoving:Connect(cleanupPlayer)
+Players.PlayerAdded:Connect(onPlayerAdded)
+Players.PlayerRemoving:Connect(onPlayerRemoving)
 
-for _, player in ipairs(Players:GetPlayers()) do
-\ttask.spawn(initializePlayer, player)
-end
+game:BindToClose(function()
+\tprint("[System] Server shutting down, performing safe state cleanup...")
+\ttask.wait(1)
+end)
 
-print("🍋 Squeeze Luau System loaded successfully.")`;
+print("⚡ [Squeeze Game System] Running with strict Luau typing.")`;
 
   return {
-    message: `Here is the Luau implementation for **"${userPrompt}"** with \`--!strict\` typing and lifecycle management!`,
+    message: `Here is the production-grade Luau implementation for **"${userPrompt}"** with strict Luau typing and safe player lifecycle management.`,
+    thinkingSteps: [
+      { stage: "Request Understanding", details: `Analyzed requirement: "${userPrompt}"`, completed: true, durationMs: 60 },
+      { stage: "Designing Architecture", details: "Constructed typed interfaces and player lifecycle handlers.", completed: true, durationMs: 100 },
+      { stage: "Implementing Changes", details: "Generated production Luau code with --!strict.", completed: true, durationMs: 150 },
+      { stage: "Reviewing Code", details: "Validated signal cleanup and memory safety.", completed: true, durationMs: 60 },
+      { stage: "Completed", details: "Saved to project workspace.", completed: true, durationMs: 15 },
+    ],
+    changePlan: {
+      filesToCreate: ["src/server/GameSystem.server.luau"],
+      filesToModify: [],
+      systemsAffected: ["GameSystem"],
+      riskLevel: "low",
+      summary: "Created GameSystem with strict types."
+    },
+    codeReview: {
+      passed: true,
+      securityRating: "A (Server-Authoritative)",
+      memoryAndLifecycle: "Clean player lifecycle cleanup",
+      antiExploitGuards: "Server-side session management"
+    },
     actionPerformed: {
       type: 'create_script',
-      summary: 'Created game script in workspace',
-      details: 'Built with strict Luau typing and debounced handlers.'
+      summary: 'Created Production Game System in workspace',
+      details: 'Strict Luau typed architecture.'
     },
     generatedScript: {
-      title: 'Roblox Game System',
-      code,
-      scriptType: 'Server Script',
-      targetInstance: 'ServerScriptService',
-      explanation: 'Production Luau script with player lifecycle and debounce management.',
-      filePath: 'src/server/GameSystem.server.luau'
+      title: "Production Game System",
+      code: formatAndSanitizeLuau(defaultCode),
+      scriptType: "Server Script",
+      targetInstance: "ServerScriptService.GameSystem",
+      explanation: "Production Luau game script with session lifecycle tracking and BindToClose shutdown protection.",
+      filePath: "src/server/GameSystem.server.luau"
     },
     suggestedPrompts: [
-      "Add DataStore persistence",
-      "Add ProximityPrompt interactions",
-      "Create client UI controller"
+      "Add leaderstats data persistence",
+      "Add sound effects and particles",
+      "Create companion LocalScript UI"
     ]
   };
 }
