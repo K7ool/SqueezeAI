@@ -8,9 +8,6 @@ import { createExpressApp } from './server/app.js';
 import { initializeSupabaseCache } from './server/db.js';
 
 async function startServer() {
-  // Initialize and hydrate our server-side memory cache with Supabase persistent data
-  await initializeSupabaseCache();
-
   const app = createExpressApp();
   const PORT = 3000;
 
@@ -34,6 +31,11 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`🍋 Squeeze Server listening on http://0.0.0.0:${PORT}`);
+    
+    // Initialize and hydrate our server-side memory cache with Supabase persistent data in the background
+    initializeSupabaseCache().catch(err => {
+      console.warn('⚠️ Error during background Supabase cache initialization:', err);
+    });
   });
 }
 

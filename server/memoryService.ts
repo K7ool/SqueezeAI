@@ -166,64 +166,76 @@ TASK:
 
 Return your analysis in the specified JSON format.`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.7-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            userPreferences: {
-              type: Type.ARRAY,
-              description: "List of new, high-confidence coding styles or tooling preferences explicitly set by the user in this message. Do not duplicate existing ones.",
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  key: { type: Type.STRING, description: "Logical dot-notation key, e.g. 'luau.typing', 'naming.style', 'comments.allow'" },
-                  value: { type: Type.STRING, description: "Specific value, e.g. 'strict', 'camelCase', 'false'" },
-                  type: { type: Type.STRING, description: "e.g. 'coding_style', 'luau_style'" },
-                  confidence: { type: Type.STRING, enum: ["medium", "high"] },
-                  source: { type: Type.STRING, description: "Exact snippet or quote from the user's message" }
-                },
-                required: ["key", "value", "type", "confidence", "source"]
-              }
-            },
-            projectFacts: {
+    const schemaConfig = {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          userPreferences: {
+            type: Type.ARRAY,
+            description: "List of new, high-confidence coding styles or tooling preferences explicitly set by the user in this message. Do not duplicate existing ones.",
+            items: {
               type: Type.OBJECT,
-              description: "Discovered facts about the active codebase or frameworks. Leave fields empty if not mentioned or changed.",
               properties: {
-                gameType: { type: Type.STRING },
-                architecture: { type: Type.STRING },
-                dataSystem: { type: Type.STRING, description: "e.g. 'ProfileService', 'DataStoreService'" },
-                commandSystem: { type: Type.STRING },
-                majorSystems: { type: Type.ARRAY, items: { type: Type.STRING } },
-                learnedConventions: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      key: { type: Type.STRING, description: "e.g. 'remote_location', 'service_location'" },
-                      value: { type: Type.STRING }
-                    },
-                    required: ["key", "value"]
-                  }
+                key: { type: Type.STRING, description: "Logical dot-notation key, e.g. 'luau.typing', 'naming.style', 'comments.allow'" },
+                value: { type: Type.STRING, description: "Specific value, e.g. 'strict', 'camelCase', 'false'" },
+                type: { type: Type.STRING, description: "e.g. 'coding_style', 'luau_style'" },
+                confidence: { type: Type.STRING, enum: ["medium", "high"] },
+                source: { type: Type.STRING, description: "Exact snippet or quote from the user's message" }
+              },
+              required: ["key", "value", "type", "confidence", "source"]
+            }
+          },
+          projectFacts: {
+            type: Type.OBJECT,
+            description: "Discovered facts about the active codebase or frameworks. Leave fields empty if not mentioned or changed.",
+            properties: {
+              gameType: { type: Type.STRING },
+              architecture: { type: Type.STRING },
+              dataSystem: { type: Type.STRING, description: "e.g. 'ProfileService', 'DataStoreService'" },
+              commandSystem: { type: Type.STRING },
+              majorSystems: { type: Type.ARRAY, items: { type: Type.STRING } },
+              learnedConventions: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    key: { type: Type.STRING, description: "e.g. 'remote_location', 'service_location'" },
+                    value: { type: Type.STRING }
+                  },
+                  required: ["key", "value"]
                 }
               }
-            },
-            conversationFocus: {
-              type: Type.OBJECT,
-              description: "Overarching active conversation focus updates.",
-              properties: {
-                currentFeature: { type: Type.STRING },
-                userIntent: { type: Type.STRING },
-                importantDecisions: { type: Type.ARRAY, items: { type: Type.STRING } }
-              }
+            }
+          },
+          conversationFocus: {
+            type: Type.OBJECT,
+            description: "Overarching active conversation focus updates.",
+            properties: {
+              currentFeature: { type: Type.STRING },
+              userIntent: { type: Type.STRING },
+              importantDecisions: { type: Type.ARRAY, items: { type: Type.STRING } }
             }
           }
         }
       }
-    });
+    };
+
+    let response;
+    try {
+      response = await ai.models.generateContent({
+        model: "gemini-3.7-flash",
+        contents: prompt,
+        config: schemaConfig
+      });
+    } catch (err: any) {
+      console.warn("[Memory Service] gemini-3.7-flash quota exceeded or failed. Falling back to gemini-3.1-flash-lite...", err.message || err);
+      response = await ai.models.generateContent({
+        model: "gemini-3.1-flash-lite",
+        contents: prompt,
+        config: schemaConfig
+      });
+    }
 
     const parsed = JSON.parse(response.text || "{}");
 

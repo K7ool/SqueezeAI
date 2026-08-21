@@ -432,8 +432,68 @@ export async function initializeSupabaseCache() {
     }
 
     saveDb(data);
+
+    // Order-respecting bulk upsert to guarantee that all dependencies (such as users) are populated in Supabase on boot
+    const BULK_SYNC_ORDER: Array<keyof DatabaseSchema> = [
+      'users',
+      'subscribers',
+      'apiKeys',
+      'dailyRewards',
+      'scripts',
+      'studioSessions',
+      'studioPairingCodes',
+      'studioChanges',
+      'studioFiles',
+      'studioConflicts',
+      'studioAuditLogs',
+      'conversations',
+      'messages',
+      'userMemories',
+      'projectMemories',
+      'conversationMemories',
+      'executionMemories',
+      'memoryEvents',
+    ];
+
+    const hasServiceRole = !!process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const isAnonAsService = process.env.SUPABASE_SERVICE_ROLE_KEY === process.env.SUPABASE_ANON_KEY;
+    if (!hasServiceRole || isAnonAsService) {
+      console.warn('⚠️  [Supabase Sync] Warning: SUPABASE_SERVICE_ROLE_KEY is not configured or is identical to SUPABASE_ANON_KEY.');
+      console.warn('   Server-side operations (like automatic schema-seeding and table synchronization) will be subject to RLS.');
+      console.warn('   To fix RLS or Foreign Key violations, please add your SUPABASE_SERVICE_ROLE_KEY under Settings > Environment Variables.');
+    }
+
+    console.log('🔄 Uploading missing seed and local records to Supabase...');
+    let rlsWarningLogged = false;
+    for (const table of BULK_SYNC_ORDER) {
+      const recordsToUpsert = data[table] as any[];
+      if (recordsToUpsert && recordsToUpsert.length > 0) {
+        const mappedTable = TABLE_MAP[table];
+        const pk = PK_MAP[table];
+        if (mappedTable && pk) {
+          const { error } = await supabase
+            .from(mappedTable)
+            .upsert(recordsToUpsert, { onConflict: pk });
+
+          if (error) {
+            const isRLS = error.message.includes('row-level security') || error.message.includes('RLS') || error.message.includes('policy');
+            if (isRLS) {
+              if (!rlsWarningLogged) {
+                console.warn(`🔒 [Supabase Sync] Row-Level Security (RLS) is blocking inserts to "${mappedTable}". Server-side syncing requires SUPABASE_SERVICE_ROLE_KEY to be configured in settings.`);
+                rlsWarningLogged = true;
+              }
+            } else {
+              console.warn(`[Supabase Sync] Bulk upsert of ${recordsToUpsert.length} records to "${mappedTable}" failed:`, error.message);
+            }
+          } else {
+            console.log(`  └─ Synced ${recordsToUpsert.length} records back to Supabase table: ${mappedTable}`);
+          }
+        }
+      }
+    }
+
     hasLoadedFromSupabase = true;
-    console.log('🎉 Squeeze Cache successfully hydrated from Supabase.');
+    console.log('🎉 Squeeze Cache successfully hydrated and synced with Supabase.');
   } catch (err: any) {
     console.warn('⚠️ Failed to load Squeeze DB from Supabase. Falling back to local JSON:', err.message || err);
   }
