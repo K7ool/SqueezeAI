@@ -2692,7 +2692,7 @@ Directly provide ONLY the appropriate response for intent [${intentResult.intent
 
     // Extract semantic facts and record execution history in persistent memory
     try {
-      extractAndStoreMemories(userId, projectId, conversationId, lastMessage, parsed.message);
+      await extractAndStoreMemories(userId, projectId, conversationId, lastMessage, parsed.message);
       db.saveExecutionMemory({
         userId,
         projectId,

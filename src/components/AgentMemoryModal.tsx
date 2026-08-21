@@ -39,7 +39,10 @@ export const AgentMemoryModal: React.FC<AgentMemoryModalProps> = ({
   const fetchMemoryOverview = async () => {
     setLoading(true);
     try {
-      const res = await safeFetchJson(`/api/memory?projectId=${projectId}`);
+      const token = localStorage.getItem('squeeze_token');
+      const res = await safeFetchJson(`/api/memory?projectId=${projectId}`, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
       if (res.ok && res.data?.success) {
         setMemoryData(res.data.memory);
       }
@@ -53,9 +56,13 @@ export const AgentMemoryModal: React.FC<AgentMemoryModalProps> = ({
   const handleSaveUserPreference = async () => {
     if (!newPrefKey.trim() || !newPrefValue.trim()) return;
     try {
+      const token = localStorage.getItem('squeeze_token');
       const res = await safeFetchJson('/api/memory/user', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({
           key: newPrefKey.trim(),
           value: newPrefValue.trim(),
@@ -77,8 +84,10 @@ export const AgentMemoryModal: React.FC<AgentMemoryModalProps> = ({
 
   const handleDeleteUserPreference = async (key: string) => {
     try {
+      const token = localStorage.getItem('squeeze_token');
       const res = await safeFetchJson(`/api/memory/user/${encodeURIComponent(key)}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
       });
       if (res.ok && res.data?.success) {
         onShowToast(`Forgot '${key}'.`);
@@ -92,9 +101,13 @@ export const AgentMemoryModal: React.FC<AgentMemoryModalProps> = ({
   const handleClearMemory = async (scope: string) => {
     if (!confirm(`Are you sure you want to clear memory for scope: ${scope}?`)) return;
     try {
+      const token = localStorage.getItem('squeeze_token');
       const res = await safeFetchJson('/api/memory/clear', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({ projectId, scope })
       });
       if (res.ok && res.data?.success) {
@@ -108,7 +121,10 @@ export const AgentMemoryModal: React.FC<AgentMemoryModalProps> = ({
 
   const handleExportMemory = async () => {
     try {
-      const res = await safeFetchJson(`/api/memory/export?projectId=${projectId}`);
+      const token = localStorage.getItem('squeeze_token');
+      const res = await safeFetchJson(`/api/memory/export?projectId=${projectId}`, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
       if (res.ok && res.data?.export) {
         const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(res.data.export, null, 2));
         const downloadAnchor = document.createElement('a');

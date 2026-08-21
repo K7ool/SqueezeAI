@@ -90,7 +90,10 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
 
   const fetchMessagesForConversation = async (convId: string) => {
     try {
-      const res = await safeFetchJson(`/api/conversations/${convId}/messages`);
+      const token = localStorage.getItem('squeeze_token');
+      const res = await safeFetchJson(`/api/conversations/${convId}/messages`, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
       if (res.ok && res.data?.success && Array.isArray(res.data.messages) && res.data.messages.length > 0) {
         const msgs: ChatMessage[] = res.data.messages.map((m: any) => ({
           id: m.id,
@@ -193,7 +196,11 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
     saveChatSessionsToStorage(filtered);
 
     try {
-      await safeFetchJson(`/api/conversations/${sessionId}`, { method: 'DELETE' });
+      const token = localStorage.getItem('squeeze_token');
+      await safeFetchJson(`/api/conversations/${sessionId}`, { 
+        method: 'DELETE',
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
     } catch (err) {}
 
     onShowToast('Chat session deleted.');
