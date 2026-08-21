@@ -896,18 +896,48 @@ class StudioWebSyncManager {
         clientIp: session.clientIp,
       };
     }
+
+    // Global fallback: return any active connected session if specific ID not found
+    for (const [_, s] of this.memorySessions.entries()) {
+      if (s.status === 'connected' && Date.now() - s.lastHeartbeat < 45000) {
+        return s;
+      }
+    }
+    const allSessions = db.getAllStudioSessions();
+    const activeDbSession = allSessions.find(s => s.status === 'connected' && Date.now() - new Date(s.lastHeartbeat).getTime() < 45000);
+    if (activeDbSession) {
+      return {
+        sessionId: activeDbSession.sessionId,
+        userId: activeDbSession.userId,
+        projectId: activeDbSession.projectId,
+        projectName: activeDbSession.projectName,
+        placeId: activeDbSession.placeId,
+        placeName: activeDbSession.placeName,
+        universeId: activeDbSession.universeId,
+        pairingCode: activeDbSession.pairingCode,
+        token: activeDbSession.token,
+        status: activeDbSession.status,
+        connectedAt: activeDbSession.connectedAt ? new Date(activeDbSession.connectedAt).getTime() : Date.now(),
+        lastHeartbeat: new Date(activeDbSession.lastHeartbeat).getTime(),
+        pluginVersion: activeDbSession.pluginVersion,
+        clientIp: activeDbSession.clientIp,
+      };
+    }
+
     return null;
   }
 
   public getProjectSyncState(projectId: string) {
-    const session = this.getSession(projectId);
-    const files = db.getStudioFiles(projectId);
-    const pendingChanges = db.getStudioPendingChanges(projectId);
-    const conflicts = db.getStudioConflicts(projectId);
-    const auditLogs = db.getStudioAuditLogs(projectId, 40);
-    const tree = this.memoryTrees.get(projectId) || [];
+    let session = this.getSession(projectId);
+    const actualProjectId = session ? session.projectId : projectId;
 
-    const isOnline = session ? (session.status === 'connected' && Date.now() - session.lastHeartbeat < 35000) : false;
+    const files = db.getStudioFiles(actualProjectId);
+    const pendingChanges = db.getStudioPendingChanges(actualProjectId);
+    const conflicts = db.getStudioConflicts(actualProjectId);
+    const auditLogs = db.getStudioAuditLogs(actualProjectId, 40);
+    const tree = this.memoryTrees.get(actualProjectId) || [];
+
+    const isOnline = session ? (session.status === 'connected' && Date.now() - session.lastHeartbeat < 45000) : false;
 
     return {
       session: session ? {
