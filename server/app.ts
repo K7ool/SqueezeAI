@@ -20,6 +20,7 @@ import {
 import { createCheckoutSession, handleStripeWebhook, PLANS } from './stripe.js';
 import { studioWebSync } from './studioWebSync.js';
 import { OFFICIAL_ROBLOX_STUDIO_PLUGIN_SOURCE } from './robloxStudioPluginSource.js';
+import { executeStudioPublish } from './agentStudioTool.js';
 
 export function createExpressApp() {
   const app = express();
@@ -318,7 +319,41 @@ export function createExpressApp() {
       }
 
       const response = await chatWithProjectAssistant(messages, projectContext || '', projectFiles);
-      res.json({ success: true, ...response });
+
+      // Automatic WebSync execution & verification if files were generated or publish/sync requested
+      const lastMsgLower = messages[messages.length - 1]?.content?.toLowerCase() || '';
+      const wantsPublish = /(publish|sync|push|deploy|apply|install|send to studio)/i.test(lastMsgLower);
+
+      let studioSyncResult = null;
+      if (wantsPublish || response.filesGenerated || response.generatedScript) {
+        const filesToSync: { path: string; name?: string; className?: string; source: string }[] = [];
+        if (Array.isArray(response.filesGenerated)) {
+          for (const f of response.filesGenerated) {
+            if (f.filePath && f.code) {
+              filesToSync.push({
+                path: f.filePath,
+                name: f.title,
+                className: f.scriptType === 'LocalScript' ? 'LocalScript' : f.scriptType === 'ModuleScript' ? 'ModuleScript' : 'Script',
+                source: f.code
+              });
+            }
+          }
+        }
+        if (response.generatedScript && response.generatedScript.code) {
+          filesToSync.push({
+            path: response.generatedScript.filePath || `src/server/${response.generatedScript.title.replace(/\s+/g, '')}.server.luau`,
+            name: response.generatedScript.title,
+            className: response.generatedScript.scriptType === 'LocalScript' ? 'LocalScript' : response.generatedScript.scriptType === 'ModuleScript' ? 'ModuleScript' : 'Script',
+            source: response.generatedScript.code
+          });
+        }
+
+        if (filesToSync.length > 0) {
+          studioSyncResult = await executeStudioPublish('prj_default_roblox', filesToSync);
+        }
+      }
+
+      res.json({ success: true, ...response, studioSyncResult });
     } catch (err: any) {
       console.error('Error in /api/chat:', err);
       res.status(500).json({ error: err.message || 'Chat assistant encountered an error.' });

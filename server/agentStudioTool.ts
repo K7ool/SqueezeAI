@@ -52,17 +52,14 @@ export async function executeStudioPublish(projectId: string, files: { path: str
     for (const file of files) {
       const scriptType = file.className || (file.path.includes('.server.') ? 'Script' : file.path.includes('.client.') ? 'LocalScript' : 'ModuleScript');
       
-      // Push file to studio change queue
-      const change = studioWebSync.pushWebsiteChange(actualProjectId, {
-        fileId: `file_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      // Save file change and queue change event for Roblox Studio WebSync
+      const res = studioWebSync.saveFileChange(actualProjectId, {
         path: file.path,
         className: scriptType as any,
-        action: 'update',
-        source: file.source,
-        author: 'ai'
-      });
+        source: file.source
+      }, 'ai', currentSession?.sessionId);
 
-      if (change) {
+      if (res.success) {
         syncedCount++;
       }
     }
@@ -79,8 +76,7 @@ export async function executeStudioPublish(projectId: string, files: { path: str
     }
 
     // Record audit log
-    db.createStudioAuditLog({
-      projectId: actualProjectId,
+    db.addStudioAuditLog(actualProjectId, {
       sessionId: currentSession?.sessionId,
       type: 'AI_PUBLISH',
       author: 'ai',

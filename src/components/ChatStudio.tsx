@@ -105,7 +105,7 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
   const handleCreateNewChat = () => {
     const newSession: ChatSession = {
       id: `chat-${Date.now()}`,
-      name: generateRandomChatName(),
+      name: 'New Conversation',
       createdAt: Date.now(),
       updatedAt: Date.now(),
       messages: [
@@ -164,11 +164,24 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
 
     const currentMessages = [...(activeSession?.messages || []), userMsg];
     
-    // Update local state with user message immediately
+    // Check if this is the first user message in the session
+    const existingUserMessages = (activeSession?.messages || []).filter(m => m.role === 'user');
+    const isFirstUserMessage = existingUserMessages.length === 0;
+
+    let derivedTitle = activeSession?.name;
+    if (isFirstUserMessage || !derivedTitle || derivedTitle === 'New Conversation' || derivedTitle.startsWith('⚡') || derivedTitle.startsWith('🏰') || derivedTitle.startsWith('⚔️')) {
+      const cleaned = promptToSend.replace(/\s+/g, ' ').trim();
+      if (cleaned.length > 0) {
+        derivedTitle = cleaned.length > 100 ? cleaned.slice(0, 97) + '...' : cleaned;
+      }
+    }
+
+    // Update local state with user message and derived title immediately
     const updatedSessionsWithUser = sessions.map(s => {
       if (s.id === activeSessionId) {
         return {
           ...s,
+          name: derivedTitle || s.name,
           messages: currentMessages,
           updatedAt: Date.now()
         };
