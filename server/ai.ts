@@ -172,7 +172,7 @@ async function callGeminiWithFallback(
       }
     } catch (err: any) {
       lastError = err;
-      const isQuota = err.status === 429 || err.message?.includes('429') || err.message?.includes('Quota exceeded') || err.message?.includes('RESOURCE_EXHAUSTED');
+      const isQuota = err.status === 429 || err.message?.includes('429') || err.message?.includes('Quota exceeded') || err.message?.includes('RESOURCE_EXHAUSTED') || err.message?.includes('quota');
       const isTransient = err.status === 503 || err.message?.includes('503') || err.message?.includes('high demand') || err.message?.includes('UNAVAILABLE');
       
       if (isQuota) {
