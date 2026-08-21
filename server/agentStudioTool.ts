@@ -35,7 +35,7 @@ export async function executeStudioPublish(projectId: string, files: { path: str
     }
 
     const currentSession = studioWebSync.getSession(projectId);
-    const isOnline = currentSession ? (currentSession.status === 'connected' && Date.now() - currentSession.lastHeartbeat < 45000) : false;
+    const isOnline = currentSession ? (currentSession.status === 'connected' && Date.now() - currentSession.lastHeartbeat < 90000) : false;
 
     if (!isOnline) {
       return {
@@ -104,7 +104,7 @@ export async function executeStudioPublish(projectId: string, files: { path: str
 export async function executeStudioOperation(projectId: string, operation: any): Promise<AgentStudioExecutionResult> {
   try {
     const session = studioWebSync.getSession(projectId);
-    const isOnline = session ? (session.status === 'connected' && Date.now() - session.lastHeartbeat < 45000) : false;
+    const isOnline = session ? (session.status === 'connected' && Date.now() - session.lastHeartbeat < 90000) : false;
 
     if (!isOnline) {
       return {
