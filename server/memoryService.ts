@@ -395,3 +395,173 @@ export function searchMemories(userId: string, query: string, projectId?: string
     executionHistory: execs
   };
 }
+
+export interface RobloxObjectRef {
+  path: string;
+  className: string;
+  name: string;
+  createdInTask?: string;
+  lastVerified?: boolean;
+}
+
+/**
+ * Gets recent objects state for a conversation
+ */
+export function getRecentObjects(conversationId: string) {
+  const convMem = db.getConversationMemory(conversationId);
+  return convMem?.recentObjects || {
+    lastCreated: undefined,
+    objects: {},
+    history: []
+  };
+}
+
+/**
+ * Saves recent objects state for a conversation
+ */
+export function saveRecentObjects(
+  conversationId: string,
+  userId: string,
+  projectId: string,
+  recentObjects: any
+): void {
+  const convMem = db.getConversationMemory(conversationId) || {
+    id: '',
+    conversationId,
+    userId,
+    projectId,
+    updatedAt: new Date().toISOString()
+  };
+
+  db.saveConversationMemory({
+    ...convMem,
+    conversationId,
+    userId,
+    projectId,
+    recentObjects
+  });
+}
+
+/**
+ * Records a created or found instance to conversation memory
+ */
+export function recordInstanceCreatedOrFound(
+  conversationId: string,
+  userId: string,
+  projectId: string,
+  path: string,
+  className: string,
+  name: string,
+  taskId?: string
+): void {
+  const recent = getRecentObjects(conversationId);
+  
+  const objRef: RobloxObjectRef = {
+    path,
+    className,
+    name,
+    createdInTask: taskId || 'task_' + Date.now(),
+    lastVerified: true
+  };
+
+  recent.lastCreated = objRef;
+  
+  // Initialize map
+  recent.objects = recent.objects || {};
+  recent.objects[name.toLowerCase()] = path;
+  recent.objects[`${className.toLowerCase()} ${name.toLowerCase()}`] = path;
+  recent.objects[path.toLowerCase()] = path;
+  
+  // Generic "it" or "the part" keywords map to the last created path
+  recent.objects['it'] = path;
+  recent.objects['the part'] = path;
+  recent.objects['this part'] = path;
+  recent.objects['that part'] = path;
+  recent.objects[`the ${className.toLowerCase()}`] = path;
+
+  // Add to history
+  recent.history = recent.history || [];
+  recent.history.push({
+    action: 'record',
+    path,
+    timestamp: new Date().toISOString()
+  });
+
+  saveRecentObjects(conversationId, userId, projectId, recent);
+}
+
+/**
+ * Resolves natural language queries to an existing path or the last created object
+ */
+export function resolveInstancePath(
+  conversationId: string,
+  projectId: string,
+  targetQuery: string,
+  explorerTree?: any[]
+): { path: string; className?: string; name?: string } | null {
+  const query = targetQuery.toLowerCase().trim();
+  const recent = getRecentObjects(conversationId);
+
+  // Helper to recursively find in Explorer Tree
+  function findInTree(items: any[], searchPath: string): any | null {
+    for (const item of items) {
+      if (item.path.toLowerCase() === searchPath.toLowerCase()) {
+        return item;
+      }
+      if (item.children) {
+        const found = findInTree(item.children, searchPath);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  // 1. Direct path lookup in Explorer Tree (if available)
+  if (explorerTree && explorerTree.length > 0) {
+    const normalized = query.startsWith('workspace/') ? query : `workspace/${query}`;
+    const foundInTree = findInTree(explorerTree, normalized) || findInTree(explorerTree, query);
+    if (foundInTree) {
+      return {
+        path: foundInTree.path,
+        className: foundInTree.className,
+        name: foundInTree.name
+      };
+    }
+  }
+
+  // 2. Exact match in recent objects keys
+  if (recent.objects && recent.objects[query]) {
+    const matchedPath = recent.objects[query];
+    if (recent.lastCreated && recent.lastCreated.path === matchedPath) {
+      return recent.lastCreated;
+    }
+    return {
+      path: matchedPath,
+      name: matchedPath.split('/').pop() || ''
+    };
+  }
+
+  // 3. Last created fallback if they say "it", "the part", "the folder", "the script"
+  if (['it', 'the part', 'this part', 'that part', 'the thing', 'the object', 'the instance'].includes(query) && recent.lastCreated) {
+    return recent.lastCreated;
+  }
+
+  // 4. Pattern matches for "part 1" or "folder a"
+  if (recent.objects) {
+    for (const [key, val] of Object.entries(recent.objects)) {
+      if (key.includes(query) || query.includes(key)) {
+        return {
+          path: val,
+          name: val.split('/').pop() || ''
+        };
+      }
+    }
+  }
+
+  // 5. Fallback to lastCreated if any modification is requested but target is vague
+  if (recent.lastCreated) {
+    return recent.lastCreated;
+  }
+
+  return null;
+}

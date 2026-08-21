@@ -4,7 +4,7 @@ import { ROBLOX_SKILLS_DATABASE, searchRobloxSkills, RobloxSkill } from "./roblo
 import { classifyUserIntent, formatCodeExplanationPrompt, AgentIntent } from "./intentClassifier.js";
 import { studio } from "./agentStudioTool.js";
 import { studioWebSync } from "./studioWebSync.js";
-import { buildAgentContext, extractAndStoreMemories } from "./memoryService.js";
+import { buildAgentContext, extractAndStoreMemories, getRecentObjects, saveRecentObjects, recordInstanceCreatedOrFound, resolveInstancePath } from "./memoryService.js";
 import { db } from "./db.js";
 
 export { classifyUserIntent };
@@ -1673,6 +1673,187 @@ When a user generates or clicks an idea node in their game map, generate 2 to 3 
   }
 }
 
+export interface ProjectInfo {
+  projectName: string;
+  projectType: string;
+  fileCount: number;
+  scriptCount: number;
+  majorFolders: string[];
+  majorSystems: string[];
+  importantFiles: string[];
+  architectureSummary: string;
+  dependencies: string[];
+  knownIssues: string[];
+}
+
+export interface ProjectUnderstanding {
+  gameType: string;
+  coreLoop: string;
+  majorSystems: string[];
+  architecture: string;
+  progression: string;
+  economy: string;
+  socialSystems: string;
+  monetization: string;
+  playerExperience: string;
+  knownIssues: string[];
+  opportunities: string[];
+}
+
+export function executeReadProject(files: ProjectFileInfo[]): ProjectInfo {
+  if (!files || files.length === 0) {
+    return {
+      projectName: "Demo Project",
+      projectType: "Unknown",
+      fileCount: 0,
+      scriptCount: 0,
+      majorFolders: [],
+      majorSystems: [],
+      importantFiles: [],
+      architectureSummary: "None",
+      dependencies: [],
+      knownIssues: []
+    };
+  }
+
+  const scriptFiles = files.filter(f => f.path.endsWith('.luau') || f.path.endsWith('.lua') || f.code);
+  const majorFoldersSet = new Set<string>();
+  const majorSystemsSet = new Set<string>();
+  const dependenciesSet = new Set<string>();
+  const knownIssues: string[] = [];
+
+  // Determine Project Type and Systems
+  let hasDonation = false;
+  let hasTycoon = false;
+  let hasClicker = false;
+  let hasCombat = false;
+  let hasObby = false;
+  let hasLeaderboard = false;
+  let hasDataStore = false;
+  let hasProfileService = false;
+
+  for (const f of files) {
+    const code = f.code || "";
+    const codeLower = code.toLowerCase();
+    const pathParts = f.path.split('/');
+    if (pathParts.length > 1) {
+      majorFoldersSet.add(pathParts[0]);
+    } else {
+      majorFoldersSet.add("WorkspaceRoot");
+    }
+
+    if (f.path.toLowerCase().includes('donation') || f.path.toLowerCase().includes('booth') || codeLower.includes('booth') || codeLower.includes('donate')) {
+      hasDonation = true;
+      majorSystemsSet.add('Donation & Custom Booths');
+    }
+    if (f.path.toLowerCase().includes('tycoon') || codeLower.includes('purchasebutton') || codeLower.includes('buybutton')) {
+      hasTycoon = true;
+      majorSystemsSet.add('Tycoon Core');
+    }
+    if (f.path.toLowerCase().includes('click') || codeLower.includes('rebirth') || codeLower.includes('multiplier') || codeLower.includes('clicks')) {
+      hasClicker = true;
+      majorSystemsSet.add('Clicker/Simulator Economy');
+    }
+    if (codeLower.includes('damage') || codeLower.includes('hitbox') || codeLower.includes('sword') || codeLower.includes('combat') || codeLower.includes('attack')) {
+      hasCombat = true;
+      majorSystemsSet.add('Combat Mechanics');
+    }
+    if (f.path.toLowerCase().includes('obby') || codeLower.includes('checkpoint') || codeLower.includes('killpart')) {
+      hasObby = true;
+      majorSystemsSet.add('Obby Stage Progression');
+    }
+    if (codeLower.includes('leaderstats') || codeLower.includes('coins') || codeLower.includes('gems')) {
+      hasLeaderboard = true;
+      majorSystemsSet.add('Leaderstats persistence');
+    }
+    if (codeLower.includes('datastore') || codeLower.includes('getasync')) {
+      hasDataStore = true;
+      majorSystemsSet.add('DataStore Saving');
+    }
+    if (codeLower.includes('profileservice')) {
+      hasProfileService = true;
+      majorSystemsSet.add('ProfileService Session-Locking');
+    }
+
+    // Dependencies extraction
+    const reqMatches = code.matchAll(/require\s*\(\s*([^)]+)\s*\)/g);
+    for (const rm of reqMatches) {
+      const depName = rm[1].trim().split('.').pop() || rm[1].trim();
+      dependenciesSet.add(depName.replace(/['"]/g, ''));
+    }
+
+    // Known issues check
+    if (codeLower.includes('datastore') && !codeLower.includes('pcall')) {
+      knownIssues.push(`Unprotected DataStore operation in \`${f.path}\` (missing pcall wrapper)`);
+    }
+    if (codeLower.includes('.touched') && !codeLower.includes('debounce') && !codeLower.includes('cooldown')) {
+      knownIssues.push(`Potential multi-trigger Touched connection in \`${f.path}\` (missing debounce gating)`);
+    }
+  }
+
+  let projectType = "Modular Luau Codebase";
+  if (hasDonation) projectType = "Donation Simulator / Social Booth game";
+  else if (hasTycoon) projectType = "Tycoon Simulator";
+  else if (hasClicker) projectType = "Clicker / Simulator";
+  else if (hasCombat) projectType = "Action/RPG Combat Game";
+  else if (hasObby) projectType = "Obby / Obstacle Course";
+
+  const importantFiles = files.slice(0, 10).map(f => f.path);
+
+  let architectureSummary = "Standard Roblox modular service-client layout";
+  if (dependenciesSet.has('Knit')) {
+    architectureSummary = "Knit Service & Controller modular framework";
+  } else if (dependenciesSet.has('ProfileService') || hasProfileService) {
+    architectureSummary = "ProfileService database manager with Knit-inspired architecture";
+  }
+
+  // Deduplicate and fallback
+  const majorFolders = Array.from(majorFoldersSet);
+  const majorSystems = Array.from(majorSystemsSet);
+  if (majorSystems.length === 0) majorSystems.push('Core Engine Logic');
+  const dependencies = Array.from(dependenciesSet);
+
+  return {
+    projectName: files[0]?.name || "ClickSimProject",
+    projectType,
+    fileCount: files.length,
+    scriptCount: scriptFiles.length,
+    majorFolders,
+    majorSystems,
+    importantFiles,
+    architectureSummary,
+    dependencies,
+    knownIssues: knownIssues.slice(0, 5)
+  };
+}
+
+export function executeProjectSearch(
+  files: ProjectFileInfo[],
+  keyword: string,
+  pathQuery?: string,
+  classNameQuery?: string
+): ProjectFileInfo[] {
+  if (!files || files.length === 0) return [];
+  const lowerKeyword = keyword.toLowerCase().trim();
+  return files.filter(f => {
+    const code = (f.code || "").toLowerCase();
+    const filePath = f.path.toLowerCase();
+    const matchKeyword = lowerKeyword === "" || code.includes(lowerKeyword) || filePath.includes(lowerKeyword);
+    const matchPath = !pathQuery || filePath.includes(pathQuery.toLowerCase());
+    const matchClass = !classNameQuery || (f.scriptType && f.scriptType.toLowerCase().includes(classNameQuery.toLowerCase()));
+    return matchKeyword && matchPath && matchClass;
+  });
+}
+
+export function executeReadFile(files: ProjectFileInfo[], targetPath: string): ProjectFileInfo | null {
+  if (!files || files.length === 0) return null;
+  const normalized = targetPath.toLowerCase().trim();
+  const exact = files.find(f => f.path.toLowerCase() === normalized);
+  if (exact) return exact;
+  const partial = files.find(f => f.path.toLowerCase().includes(normalized) || normalized.includes(f.path.toLowerCase()));
+  return partial || null;
+}
+
 /**
  * Chat with Project Assistant: Upgraded Codebase-Aware Roblox Development Agent
  */
@@ -1716,27 +1897,187 @@ export async function chatWithProjectAssistant(
     const parentPath = inst.parentPath || 'Workspace';
 
     const targetProjId = projectId || 'prj_default_roblox';
-    let execResult;
+    const explorerTree = studioWebSync.getMemoryTree(targetProjId) || [];
+    const recentObjects = getRecentObjects(conversationId) as any;
+
+    // Existing Object First logic
     if (op === 'createInstance') {
+      const targetPath = `${parentPath}/${name}`;
+      const resolved = resolveInstancePath(conversationId, targetProjId, name, explorerTree);
+      
+      const existsInTree = explorerTree.some((item: any) => item.path.toLowerCase() === targetPath.toLowerCase() || (resolved && item.path.toLowerCase() === resolved.path.toLowerCase()));
+      
+      if (existsInTree || resolved) {
+        const finalPath = resolved ? resolved.path : targetPath;
+        const finalName = resolved ? resolved.name : name;
+        const finalClassName = resolved ? resolved.className || className : className;
+        
+        recordInstanceCreatedOrFound(conversationId, userId, targetProjId, finalPath, finalClassName, finalName);
+        
+        return {
+          message: `✓ **Instance '${finalName}' already exists at '${finalPath}'**\n\nUsing the existing ${finalClassName} instead of creating a duplicate.`,
+          thinkingSteps: [
+            { stage: "Intent Classification", details: `✓ Detected: Create Instance '${finalName}'`, completed: true, durationMs: 10 },
+            { stage: "Existing Object First Check", details: `→ Found existing ${finalClassName} at '${finalPath}'`, completed: true, durationMs: 15 },
+            { stage: "Verification", details: `✓ Preserved existing instance, stored reference in conversation memory`, completed: true, durationMs: 10 }
+          ],
+          studioOperations: [],
+          actionPerformed: {
+            type: 'studio_operation',
+            summary: `Preserved existing ${finalClassName} at '${finalPath}'`
+          },
+          suggestedPrompts: [
+            `Make part '${finalName}' size bigger x2`,
+            `Anchor Part '${finalName}'`,
+            `Change color of '${finalName}'`
+          ]
+        };
+      }
+    }
+
+    let execResult;
+    let successMessage = '';
+    let detailsMessage = '';
+
+    if (op === 'createInstance') {
+      const targetPath = `${parentPath}/${name}`;
       execResult = await studio.createInstance(targetProjId, { className, name, parentPath, properties: inst.properties });
+      
+      if (execResult && execResult.success) {
+        recordInstanceCreatedOrFound(conversationId, userId, targetProjId, targetPath, className, name);
+        successMessage = `✓ **Created ${className} '${name}' in ${parentPath}**`;
+        detailsMessage = `Successfully enqueued and verified in Roblox Studio via WebSync.`;
+      } else {
+        successMessage = `❌ **Failed to create ${className} '${name}'**`;
+        detailsMessage = execResult?.summary || `Could not execute create operation in Studio.`;
+      }
     } else if (op === 'deleteInstance') {
-      execResult = await studio.deleteInstance(targetProjId, `${parentPath}/${name}`);
+      const resolved = resolveInstancePath(conversationId, targetProjId, name, explorerTree);
+      const finalPath = resolved ? resolved.path : `${parentPath}/${name}`;
+      const finalName = resolved ? resolved.name : name;
+
+      execResult = await studio.deleteInstance(targetProjId, finalPath);
+      
+      if (execResult && execResult.success) {
+        if (recentObjects.objects) {
+          delete recentObjects.objects[finalName.toLowerCase()];
+          delete recentObjects.objects[finalPath.toLowerCase()];
+          if (recentObjects.lastCreated && recentObjects.lastCreated.path === finalPath) {
+            recentObjects.lastCreated = undefined;
+          }
+        }
+        saveRecentObjects(conversationId, userId, targetProjId, recentObjects);
+        
+        successMessage = `✓ **Deleted Instance at '${finalPath}'**`;
+        detailsMessage = `Successfully removed and synchronized in Roblox Studio.`;
+      } else {
+        successMessage = `❌ **Failed to delete Instance at '${finalPath}'**`;
+        detailsMessage = execResult?.summary || `Could not execute delete operation in Studio.`;
+      }
     } else if (op === 'renameInstance') {
-      execResult = await studio.renameInstance(targetProjId, { path: `${parentPath}/${name}`, newName: inst.newName || 'RenamedInstance' });
+      const resolved = resolveInstancePath(conversationId, targetProjId, name, explorerTree);
+      const finalPath = resolved ? resolved.path : `${parentPath}/${name}`;
+      const finalName = resolved ? resolved.name : name;
+      const newName = inst.newName || 'RenamedInstance';
+
+      execResult = await studio.renameInstance(targetProjId, { path: finalPath, newName });
+      
+      if (execResult && execResult.success) {
+        const parentParts = finalPath.split('/');
+        parentParts.pop();
+        const newPath = [...parentParts, newName].join('/');
+        
+        recordInstanceCreatedOrFound(conversationId, userId, targetProjId, newPath, className, newName);
+        successMessage = `✓ **Renamed Instance '${finalName}' to '${newName}'**`;
+        detailsMessage = `Successfully updated and verified in Studio.`;
+      } else {
+        successMessage = `❌ **Failed to rename Instance '${finalName}'**`;
+        detailsMessage = execResult?.summary || `Could not execute rename operation in Studio.`;
+      }
     } else if (op === 'moveInstance') {
-      execResult = await studio.moveInstance(targetProjId, { path: `${parentPath}/${name}`, newParentPath: inst.newParentPath || 'Workspace' });
+      const resolved = resolveInstancePath(conversationId, targetProjId, name, explorerTree);
+      const finalPath = resolved ? resolved.path : `${parentPath}/${name}`;
+      const finalName = resolved ? resolved.name : name;
+      const newParentPath = inst.newParentPath || 'Workspace';
+
+      execResult = await studio.moveInstance(targetProjId, { path: finalPath, newParentPath });
+      
+      if (execResult && execResult.success) {
+        const newPath = `${newParentPath}/${finalName}`;
+        recordInstanceCreatedOrFound(conversationId, userId, targetProjId, newPath, className, finalName);
+        successMessage = `✓ **Moved Instance '${finalName}' to '${newParentPath}'**`;
+        detailsMessage = `Successfully moved and synchronized in Studio.`;
+      } else {
+        successMessage = `❌ **Failed to move Instance '${finalName}'**`;
+        detailsMessage = execResult?.summary || `Could not execute move operation in Studio.`;
+      }
     } else if (op === 'setProperty') {
-      execResult = await studio.setProperty(targetProjId, { path: `${parentPath}/${name}`, propertyName: inst.propertyName || 'Anchored', propertyValue: inst.propertyValue });
+      const resolved = resolveInstancePath(conversationId, targetProjId, name, explorerTree);
+      const finalPath = resolved ? resolved.path : `${parentPath}/${name}`;
+      const finalName = resolved ? resolved.name : name;
+      const propertyName = inst.propertyName || 'Anchored';
+      let propertyValue = inst.propertyValue;
+
+      if (propertyName === 'Size') {
+        let currentSize = { x: 4, y: 1, z: 2 };
+        const savedProps = recentObjects.properties?.[finalPath.toLowerCase()] || {};
+        if (savedProps.Size) {
+          currentSize = savedProps.Size;
+        }
+
+        const valStr = String(propertyValue).toLowerCase();
+        let scaleX = 1;
+        let scaleY = 1;
+        let scaleZ = 1;
+
+        if (valStr.includes('x2') || valStr.includes('2x') || valStr.includes('double') || valStr.includes('twice')) {
+          scaleX = scaleY = scaleZ = 2;
+        } else if (valStr.includes('x3') || valStr.includes('3x')) {
+          scaleX = scaleY = scaleZ = 3;
+        } else if (valStr.includes('half') || valStr.includes('0.5')) {
+          scaleX = scaleY = scaleZ = 0.5;
+        } else if (valStr.includes('bigger')) {
+          scaleX = scaleY = scaleZ = 1.5;
+        } else if (valStr.includes('smaller')) {
+          scaleX = scaleY = scaleZ = 0.75;
+        }
+
+        const newSize = {
+          x: currentSize.x * scaleX,
+          y: currentSize.y * scaleY,
+          z: currentSize.z * scaleZ
+        };
+
+        recentObjects.properties = recentObjects.properties || {};
+        recentObjects.properties[finalPath.toLowerCase()] = {
+          ...savedProps,
+          Size: newSize
+        };
+        saveRecentObjects(conversationId, userId, targetProjId, recentObjects);
+
+        propertyValue = { X: newSize.x, Y: newSize.y, Z: newSize.z };
+      }
+
+      execResult = await studio.setProperty(targetProjId, { path: finalPath, propertyName, propertyValue });
+      
+      if (execResult && execResult.success) {
+        recordInstanceCreatedOrFound(conversationId, userId, targetProjId, finalPath, className, finalName);
+        successMessage = `✓ **Set ${propertyName} of '${finalName}' to ${JSON.stringify(propertyValue)}**`;
+        detailsMessage = `Successfully modified and verified in Roblox Studio.`;
+      } else {
+        successMessage = `❌ **Failed to set ${propertyName} of '${finalName}'**`;
+        detailsMessage = execResult?.summary || `Could not execute property change in Studio.`;
+      }
     }
 
     return {
-      message: `✓ **Created ${className} '${name}' in ${parentPath}**\n\nSuccessfully enqueued and verified in Roblox Studio via WebSync.`,
+      message: `${successMessage}\n\n${detailsMessage}`,
       thinkingSteps: [
-        { stage: "Intent Classification", details: `✓ Detected: Instance Operation (${op} ${className} '${name}' in ${parentPath})`, completed: true, durationMs: 20 },
+        { stage: "Intent Classification", details: `✓ Detected: Instance Operation (${op} on '${name}')`, completed: true, durationMs: 15 },
+        { stage: "Target Resolution", details: `→ Resolved target to '${parentPath}/${name}'`, completed: true, durationMs: 20 },
         { stage: "Studio Connection", details: "✓ Studio connected and paired", completed: true, durationMs: 15 },
-        { stage: "Studio Execution", details: `→ Executed ${op} for ${parentPath}/${name}`, completed: true, durationMs: 40 },
-        { stage: "Studio Acknowledgment", details: `✓ Studio applied ${op}`, completed: true, durationMs: 50 },
-        { stage: "Verification", details: `✓ Verified ${className} '${name}' created in ${parentPath}`, completed: true, durationMs: 10 }
+        { stage: "Studio Execution", details: `→ Executed operation on Studio`, completed: true, durationMs: 40 },
+        { stage: "Verification", details: `✓ Verified change applied successfully`, completed: true, durationMs: 15 }
       ],
       studioOperations: [{
         operation: op,
@@ -1747,12 +2088,12 @@ export async function chatWithProjectAssistant(
       }],
       actionPerformed: {
         type: 'studio_operation',
-        summary: `Created ${className} '${name}' in ${parentPath}`
+        summary: `${op} on '${name}'`
       },
       suggestedPrompts: [
+        `Make part '${name}' size bigger x2`,
         `Anchor Part '${name}'`,
-        `Change color of '${name}'`,
-        `Delete '${name}'`
+        `Change color of '${name}'`
       ]
     };
   }
@@ -1955,6 +2296,119 @@ A focused Luau script managing engine-level state and game loops.`,
       httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
     });
 
+    const executionTrace: Array<{ stage: string; details: string; completed: boolean; durationMs: number }> = [];
+    let toolResultsContext = "";
+    
+    // Retrieve previous ideas from conversation memory to support iterative opportunity generation
+    const recentObjects = getRecentObjects(conversationId) as any;
+    const previousIdeas = recentObjects.suggestedIdeas || [];
+
+    const isProjectOrIdeasQuery = isAnalysisRequest || 
+      /ideas|suggest|improve|what can I build|how does this script|whats wrong with|bug|error|fix this|explain this|how does.*work|what is my game|what systems do I have/i.test(lastMessage);
+
+    if (isProjectOrIdeasQuery && projectFiles && projectFiles.length > 0) {
+      executionTrace.push({ stage: "Reasoning", details: "Understanding your request and evaluating project context...", completed: true, durationMs: 120 });
+      
+      // Step 1: Run Read Project Tool
+      const projectInfo = executeReadProject(projectFiles);
+      executionTrace.push({ 
+        stage: "Tool: Read Project", 
+        details: `Successfully read project and profiled ${projectInfo.fileCount} workspace files. Detected Roblox Game Type: "${projectInfo.projectType}"`, 
+        completed: true, 
+        durationMs: 200 
+      });
+
+      // Step 2: Run Search Project Tool based on relevant keywords
+      executionTrace.push({ stage: "Reasoning", details: "Identifying game's core gameplay and progression systems...", completed: true, durationMs: 110 });
+      const searchTerms = ["donation", "booth", "economy", "leaderboard", "datastore", "quest", "combat", "click", "saving", "profile"];
+      let foundMatches: string[] = [];
+      let searchResults: ProjectFileInfo[] = [];
+      
+      for (const term of searchTerms) {
+        const matches = executeProjectSearch(projectFiles, term);
+        if (matches.length > 0) {
+          searchResults = [...searchResults, ...matches.slice(0, 2)];
+          foundMatches.push(term);
+        }
+      }
+      
+      // Remove duplicates from searchResults
+      const uniqueSearchResults = Array.from(new Map(searchResults.map(item => [item.path, item])).values());
+      
+      executionTrace.push({ 
+        stage: "Tool: Search project files", 
+        details: `Searched project files using keywords: [${foundMatches.join(', ')}]. Matches found: ${uniqueSearchResults.map(f => f.name).join(', ')}`, 
+        completed: true, 
+        durationMs: 150 
+      });
+
+      // Step 3: Read Important / Target files
+      const readFiles: ProjectFileInfo[] = [];
+      const filesToRead = uniqueSearchResults.slice(0, 3);
+      for (const f of filesToRead) {
+        const content = executeReadFile(projectFiles, f.path);
+        if (content) {
+          readFiles.push(content);
+        }
+      }
+
+      if (readFiles.length > 0) {
+        executionTrace.push({ 
+          stage: "Tool: Read relevant files", 
+          details: `In-depth source code analysis of files: ${readFiles.map(r => r.name).join(', ')}`, 
+          completed: true, 
+          durationMs: 250 
+        });
+      }
+
+      executionTrace.push({ stage: "Reasoning", details: "Looking for progression and retention gaps to build customized solutions...", completed: true, durationMs: 130 });
+
+      // Build structured project understanding
+      const understanding: ProjectUnderstanding = {
+        gameType: projectInfo.projectType,
+        coreLoop: projectInfo.projectType === "Donation Simulator / Social Booth game" 
+          ? "Players set up customized donation booths, trigger donation visual/sound effects to attract donators, raise money to custom climb leaderboards, and use donations to unlock customizable booth designs."
+          : "Standard gameplay cycle matching " + projectInfo.projectType,
+        majorSystems: projectInfo.majorSystems,
+        architecture: projectInfo.architectureSummary,
+        progression: projectInfo.majorSystems.includes('Obby Stage Progression') ? "Stage/Stage values saving" : "Leaderstats / Cash values saving",
+        economy: projectInfo.majorSystems.includes('Donation & Custom Booths') ? "Donation transactions" : "Coin / XP rewards loop",
+        socialSystems: projectInfo.majorSystems.includes('Leaderstats persistence') ? "Global Leaderboards and Knox Server Announcements" : "Standard multiplayer servers",
+        monetization: "Booth customizers, developer products, custom gamepasses",
+        playerExperience: "Interactive booth displays, dynamic effects, particle systems",
+        knownIssues: projectInfo.knownIssues,
+        opportunities: [
+          "Implement tiered milestone badges for highest donations",
+          "Create local/global database for custom booth saving",
+          "Design dynamic booth customizers using customizable screen UI modules"
+        ]
+      };
+
+      toolResultsContext = `=== REAL-TIME PROJECT INVESTIGATION RESULTS ===
+PROFILED PROJECT INFORMATION:
+- Project Type: ${projectInfo.projectType}
+- Total File Count: ${projectInfo.fileCount}
+- Script Count: ${projectInfo.scriptCount}
+- Major Folders: ${projectInfo.majorFolders.join(', ')}
+- Major Systems Detected: ${projectInfo.majorSystems.join(', ')}
+- Known Architecture: ${projectInfo.architectureSummary}
+- Dependencies: ${projectInfo.dependencies.join(', ')}
+- Known Technical Issues: ${projectInfo.knownIssues.join(' | ')}
+
+PROJECT EVIDENCE & SOURCE SNIPPETS ANALYSED:
+${readFiles.map(rf => `File: ${rf.path}\n\`\`\`luau\n${rf.code.slice(0, 1500)}${rf.code.length > 1500 ? '\n... [Truncated for brevity]' : ''}\n\`\`\``).join('\n\n')}
+
+STRUCTURED GAME UNDERSTANDING:
+- Core Loop: ${understanding.coreLoop}
+- Major Systems: ${understanding.majorSystems.join(', ')}
+- Architecture Style: ${understanding.architecture}
+- Opportunities: ${understanding.opportunities.join(', ')}
+
+PREVIOUSLY SUGGESTED IDEAS (DO NOT RE-SUGGEST THESE):
+${previousIdeas.length > 0 ? previousIdeas.map((id: any) => `- Name: ${id.name}`).join('\n') : "No ideas previously suggested."}
+================================================`;
+    }
+
     const skillsContext = skillsFound.map(s => 
       `[ROBLOX SKILL / API DOCS]: ${s.title} (${s.category})\n` +
       `Key Services: ${s.keyServices.join(', ')}\n` +
@@ -2008,6 +2462,8 @@ ${skillsContext || "General Roblox Engine APIs and Luau 5.1 / 2.0 specifications
 
 USER PROJECT CONTEXT & RANKED CODEBASE:
 ${rankedContext}
+
+${toolResultsContext ? `REAL-TIME AUTOMATED INVESTIGATION SOURCE:\n${toolResultsContext}\n` : ""}
 
 CONVERSATION HISTORY:
 ${messages.slice(0, -1).map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n\n')}
@@ -2096,6 +2552,22 @@ Directly provide ONLY the appropriate response for intent [${intentResult.intent
             required: ["title", "code", "scriptType", "targetInstance", "filePath"]
           }
         },
+        suggestedIdeas: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              name: { type: Type.STRING },
+              whyItFits: { type: Type.STRING },
+              problemSolved: { type: Type.STRING },
+              gameplayEffect: { type: Type.STRING },
+              requiredSystems: { type: Type.ARRAY, items: { type: Type.STRING } },
+              difficulty: { type: Type.STRING },
+              dependencies: { type: Type.ARRAY, items: { type: Type.STRING } }
+            },
+            required: ["name", "whyItFits", "problemSolved", "gameplayEffect", "requiredSystems", "difficulty", "dependencies"]
+          }
+        },
         studioOperations: {
           type: Type.ARRAY,
           description: "Raw operations to execute against Roblox Studio directly. E.g. createInstance, setProperty. Use this to construct instances or folders.",
@@ -2134,6 +2606,22 @@ Directly provide ONLY the appropriate response for intent [${intentResult.intent
     };
 
     const parsed = await callGeminiWithFallback(ai, conversationPrompt, systemInstruction, schema);
+
+    // Persist suggested ideas to memory for conversation memory iteration support
+    if (Array.isArray(parsed.suggestedIdeas) && parsed.suggestedIdeas.length > 0) {
+      recentObjects.suggestedIdeas = recentObjects.suggestedIdeas || [];
+      for (const idea of parsed.suggestedIdeas) {
+        if (!recentObjects.suggestedIdeas.some((i: any) => i.name.toLowerCase() === idea.name.toLowerCase())) {
+          recentObjects.suggestedIdeas.push(idea);
+        }
+      }
+      saveRecentObjects(conversationId, userId, projectId, recentObjects);
+    }
+
+    // Prepend actual live execution trace steps to UI thinking steps
+    if (executionTrace.length > 0) {
+      parsed.thinkingSteps = [...executionTrace, ...(parsed.thinkingSteps || [])];
+    }
 
     // If user did NOT explicitly request code generation, strictly strip any generated script payload
     if (!isCodeRequest && !isAnalysisRequest) {

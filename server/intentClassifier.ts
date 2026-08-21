@@ -188,9 +188,145 @@ export function classifyUserIntent(prompt: string, contextFiles?: ProjectFileInf
   ];
 
   const containsInstanceClass = instanceClassNames.some(cls => p.includes(cls));
+  const isModificationRequest = p.includes('anchor') || p.includes('unanchor') || p.includes('color') || p.includes('size') || p.includes('bigger') || p.includes('smaller') || p.includes('resize') || p.includes('delete') || p.includes('destroy') || p.includes('remove') || p.includes('rename') || p.includes('move');
+  const isInstanceOperation = (!isScriptTypeRequest && (containsInstanceClass || isModificationRequest));
 
-  if (!isScriptTypeRequest && containsInstanceClass) {
-    // 6a. Create Instance
+  if (isInstanceOperation) {
+    // 6a. Delete / Remove Instance
+    const deleteMatch = p.match(/(?:delete|remove|destroy)\s+(?:the|a|an)?\s*([a-zA-Z0-9_]+)?\s*(?:named|called)?\s*([a-zA-Z0-9_\-\.\/]+)/i) || p.match(/(?:delete|remove|destroy)\s+(it)/i);
+    if (deleteMatch) {
+      const targetName = deleteMatch[2] || deleteMatch[1];
+      const targetPath = normalizeRobloxPath(targetName);
+      return {
+        intent: 'INSTANCE_OPERATION',
+        confidence: 0.98,
+        reason: `User requested deletion of Instance '${targetPath}'`,
+        hasCodeInPrompt: false,
+        requiresCodeGeneration: false,
+        mode: 'INSTANCE_MODE',
+        targetPathNormalized: targetPath,
+        structuredInstanceIntent: {
+          operation: 'deleteInstance',
+          name: targetName,
+          parentPath: targetPath
+        },
+        skillsRequired: ['Roblox Core']
+      };
+    }
+
+    // 6b. Rename Instance
+    const renameMatch = p.match(/(?:rename)\s+(?:the|a|an)?\s*([a-zA-Z0-9_]+)?\s*([a-zA-Z0-9_\-\.\/]+)\s+to\s+([a-zA-Z0-9_\-\.]+)/i);
+    if (renameMatch) {
+      const oldName = renameMatch[2];
+      const newName = renameMatch[3];
+      return {
+        intent: 'INSTANCE_OPERATION',
+        confidence: 0.98,
+        reason: `User requested rename of Instance '${oldName}' to '${newName}'`,
+        hasCodeInPrompt: false,
+        requiresCodeGeneration: false,
+        mode: 'INSTANCE_MODE',
+        structuredInstanceIntent: {
+          operation: 'renameInstance',
+          name: oldName,
+          newName
+        },
+        skillsRequired: ['Roblox Core']
+      };
+    }
+
+    // 6c. Move Instance
+    const moveMatch = p.match(/(?:move)\s+(?:the|a|an)?\s*([a-zA-Z0-9_]+)?\s*([a-zA-Z0-9_\-\.]+)\s+to\s+([a-zA-Z0-9_\-\.\s\/]+)/i);
+    if (moveMatch) {
+      const targetName = moveMatch[2];
+      const newParentPath = normalizeRobloxPath(moveMatch[3]);
+      return {
+        intent: 'INSTANCE_OPERATION',
+        confidence: 0.98,
+        reason: `User requested moving Instance '${targetName}' to '${newParentPath}'`,
+        hasCodeInPrompt: false,
+        requiresCodeGeneration: false,
+        mode: 'INSTANCE_MODE',
+        structuredInstanceIntent: {
+          operation: 'moveInstance',
+          name: targetName,
+          newParentPath
+        },
+        skillsRequired: ['Roblox Core']
+      };
+    }
+
+    // 6d. Set Property (Anchor, Color, Size, etc.) - CHECK THIS BEFORE CREATE
+    let isPropertyChange = false;
+    let targetName = 'it';
+    let propName = '';
+    let propValue: any = null;
+
+    // (i) Anchor / Unanchor patterns
+    if (p.includes('anchor') || p.includes('unanchor')) {
+      isPropertyChange = true;
+      propName = 'Anchored';
+      propValue = p.includes('anchored') || (p.includes('anchor') && !p.includes('unanchor'));
+      
+      const anchorMatch = p.match(/(?:anchor|unanchor)\s+(?:the|a|an)?\s*(?:part|folder|instance|model)?\s*([a-zA-Z0-9_\-\.]+)/i);
+      if (anchorMatch) {
+        targetName = anchorMatch[1];
+      } else {
+        const anchorMatch2 = p.match(/([a-zA-Z0-9_\-\.]+)\s+should\s+be\s+(?:anchored|unanchored)/i);
+        if (anchorMatch2 && anchorMatch2[1] !== 'it') {
+          targetName = anchorMatch2[1];
+        }
+      }
+    }
+    // (ii) Color patterns
+    else if (p.includes('color') || /(?:red|blue|green|yellow|black|white|orange|purple|pink|brown|grey|gray)/i.test(p)) {
+      isPropertyChange = true;
+      propName = 'Color';
+      
+      const colorMatch = p.match(/(red|blue|green|yellow|black|white|orange|purple|pink|brown|grey|gray)/i);
+      propValue = colorMatch ? colorMatch[1] : 'Red';
+      propValue = propValue.charAt(0).toUpperCase() + propValue.slice(1);
+
+      // Extract target, e.g., "change its color to red", "make part 1 red"
+      const targetMatch = p.match(/(?:make|color|change)\s+(?:the|its|a|an)?\s*(?:part|folder|instance|model)?\s*([a-zA-Z0-9_\-\.]+)?\s*(?:to\s+)?(?:red|blue|green|yellow|black|white|orange|purple|pink|brown|grey|gray)/i);
+      if (targetMatch && targetMatch[1]) {
+        targetName = targetMatch[1];
+      }
+    }
+    // (iii) Size / Scale / Resize patterns
+    else if (p.includes('size') || p.includes('scale') || p.includes('resize') || p.includes('bigger') || p.includes('smaller') || p.includes('wider') || p.includes('taller')) {
+      isPropertyChange = true;
+      propName = 'Size';
+      
+      const modifierMatch = p.match(/(x\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*x|bigger|smaller|double|half|twice|\d+(?:\.\d+)?)/i);
+      propValue = modifierMatch ? modifierMatch[1].replace(/\s+/g, '') : 'bigger';
+
+      const targetMatch = p.match(/(?:resize|make|scale|set)\s+(?:the|its|a|an)?\s*(?:part|folder|instance|model)?\s*([a-zA-Z0-9_\-\.]+)/i);
+      if (targetMatch && targetMatch[1]) {
+        targetName = targetMatch[1];
+      }
+    }
+
+    if (isPropertyChange) {
+      return {
+        intent: 'INSTANCE_OPERATION',
+        confidence: 0.98,
+        reason: `User requested property change (${propName} = ${propValue}) on Instance '${targetName}'`,
+        hasCodeInPrompt: false,
+        requiresCodeGeneration: false,
+        mode: 'INSTANCE_MODE',
+        structuredInstanceIntent: {
+          operation: 'setProperty',
+          name: targetName,
+          propertyName: propName,
+          propertyValue: propValue,
+          parentPath: 'Workspace'
+        },
+        skillsRequired: ['Roblox Core']
+      };
+    }
+
+    // 6e. Create Instance (ONLY IF NOT A PROPERTY MODIFICATION)
     const createMatch = prompt.match(/(?:create|make|add|spawn|generate|build)\s+(?:a|an)?\s*([a-zA-Z0-9_]+)\s+(?:named|called|with name)?\s*([a-zA-Z0-9_\-\.]+)(?:\s+(?:in|inside|under|at|on)?\s*([a-zA-Z0-9_\-\.\s\/]+))?/i);
     if (createMatch) {
       const rawClass = createMatch[1];
@@ -225,93 +361,6 @@ export function classifyUserIntent(prompt: string, contextFiles?: ProjectFileInf
           name,
           parentPath,
           properties: className === 'Part' ? { Anchored: true } : {}
-        },
-        skillsRequired: ['Roblox Core']
-      };
-    }
-
-    // 6b. Delete / Remove Instance
-    const deleteMatch = p.match(/(?:delete|remove|destroy)\s+(?:the|a|an)?\s*([a-zA-Z0-9_]+)?\s*(?:named|called)?\s*([a-zA-Z0-9_\-\.\/]+)/i);
-    if (deleteMatch) {
-      const targetName = deleteMatch[2] || deleteMatch[1];
-      const targetPath = normalizeRobloxPath(targetName);
-      return {
-        intent: 'INSTANCE_OPERATION',
-        confidence: 0.95,
-        reason: `User requested deletion of Instance '${targetPath}'`,
-        hasCodeInPrompt: false,
-        requiresCodeGeneration: false,
-        mode: 'INSTANCE_MODE',
-        targetPathNormalized: targetPath,
-        structuredInstanceIntent: {
-          operation: 'deleteInstance',
-          name: targetName,
-          parentPath: targetPath
-        },
-        skillsRequired: ['Roblox Core']
-      };
-    }
-
-    // 6c. Rename Instance
-    const renameMatch = p.match(/(?:rename)\s+(?:the|a|an)?\s*([a-zA-Z0-9_]+)?\s*([a-zA-Z0-9_\-\.\/]+)\s+to\s+([a-zA-Z0-9_\-\.]+)/i);
-    if (renameMatch) {
-      const oldName = renameMatch[2];
-      const newName = renameMatch[3];
-      return {
-        intent: 'INSTANCE_OPERATION',
-        confidence: 0.95,
-        reason: `User requested rename of Instance '${oldName}' to '${newName}'`,
-        hasCodeInPrompt: false,
-        requiresCodeGeneration: false,
-        mode: 'INSTANCE_MODE',
-        structuredInstanceIntent: {
-          operation: 'renameInstance',
-          name: oldName,
-          newName
-        },
-        skillsRequired: ['Roblox Core']
-      };
-    }
-
-    // 6d. Move Instance
-    const moveMatch = p.match(/(?:move)\s+(?:the|a|an)?\s*([a-zA-Z0-9_]+)?\s*([a-zA-Z0-9_\-\.]+)\s+to\s+([a-zA-Z0-9_\-\.\s\/]+)/i);
-    if (moveMatch) {
-      const targetName = moveMatch[2];
-      const newParentPath = normalizeRobloxPath(moveMatch[3]);
-      return {
-        intent: 'INSTANCE_OPERATION',
-        confidence: 0.95,
-        reason: `User requested moving Instance '${targetName}' to '${newParentPath}'`,
-        hasCodeInPrompt: false,
-        requiresCodeGeneration: false,
-        mode: 'INSTANCE_MODE',
-        structuredInstanceIntent: {
-          operation: 'moveInstance',
-          name: targetName,
-          newParentPath
-        },
-        skillsRequired: ['Roblox Core']
-      };
-    }
-
-    // 6e. Set Property (Anchor, Color, Size, etc.)
-    if (p.includes('anchor') || p.includes('unanchor') || p.includes('make part') || p.includes('set property') || p.includes('color')) {
-      const isAnchored = p.includes('anchor') && !p.includes('unanchor');
-      const targetNameMatch = p.match(/(?:anchor|unanchor|make|set)\s+(?:part|instance|folder)?\s*([a-zA-Z0-9_\-\.]+)/i);
-      const targetName = targetNameMatch ? targetNameMatch[1] : '1';
-      return {
-        intent: 'INSTANCE_OPERATION',
-        confidence: 0.92,
-        reason: `User requested property change on Instance '${targetName}'`,
-        hasCodeInPrompt: false,
-        requiresCodeGeneration: false,
-        mode: 'INSTANCE_MODE',
-        structuredInstanceIntent: {
-          operation: 'setProperty',
-          name: targetName,
-          parentPath: 'Workspace',
-          propertyName: 'Anchored',
-          propertyValue: isAnchored
         },
         skillsRequired: ['Roblox Core']
       };

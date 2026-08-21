@@ -257,7 +257,10 @@ export const studio = {
       operation: 'setProperty',
       path: params.path,
       propertyName: params.propertyName,
-      propertyValue: params.propertyValue
+      propertyValue: params.propertyValue,
+      properties: {
+        [params.propertyName]: params.propertyValue
+      }
     });
   },
 

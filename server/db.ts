@@ -242,6 +242,11 @@ export interface ConversationMemoryRecord {
   recentOperations?: string[];
   openIssues?: string[];
   userIntent?: string;
+  recentObjects?: {
+    lastCreated?: { path: string; className: string; name: string; createdInTask?: string; lastVerified?: boolean };
+    objects?: Record<string, string>;
+    history?: Array<{ action: string; path: string; timestamp: string }>;
+  };
   updatedAt: string;
 }
 
@@ -1327,6 +1332,11 @@ export const db = {
         recentOperations: mem.recentOperations || [],
         openIssues: mem.openIssues || [],
         userIntent: mem.userIntent,
+        recentObjects: mem.recentObjects || {
+          lastCreated: undefined,
+          objects: {},
+          history: []
+        },
         updatedAt: now,
       };
       data.conversationMemories.push(result);
