@@ -7,6 +7,40 @@ let lastAdminKey: string | null = null;
 let lastAnonUrl: string | null = null;
 let lastAnonKey: string | null = null;
 
+// Simple concurrency limiter
+const MAX_CONCURRENT_WRITES = 5;
+let activeWrites = 0;
+const writeQueue: (() => Promise<void>)[] = [];
+
+async function processQueue() {
+  if (activeWrites >= MAX_CONCURRENT_WRITES || writeQueue.length === 0) return;
+  
+  const task = writeQueue.shift();
+  if (task) {
+    activeWrites++;
+    try {
+      await task();
+    } finally {
+      activeWrites--;
+      processQueue();
+    }
+  }
+}
+
+export async function queueSupabaseWrite(fn: () => Promise<any>) {
+  return new Promise((resolve, reject) => {
+    writeQueue.push(async () => {
+      try {
+        const result = await fn();
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      }
+    });
+    processQueue();
+  });
+}
+
 /**
  * Sanitizes the Supabase URL to ensure it contains only the protocol and host.
  * This prevents malformed paths (e.g. trailing slashes, appended /rest/v1 paths, etc.)

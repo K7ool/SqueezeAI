@@ -117,6 +117,13 @@ const AI_MODELS = [
   'gemini-3.1-flash-lite',
 ];
 
+interface ModelStatus {
+  status: 'healthy' | 'exhausted';
+  blockedUntil?: number;
+}
+
+const modelStatuses = new Map<string, ModelStatus>();
+
 /**
  * Robust JSON caller with Gemini Model Failover & transient retry
  */
@@ -129,6 +136,12 @@ async function callGeminiWithFallback(
   let lastError: any = null;
 
   for (const model of AI_MODELS) {
+    const status = modelStatuses.get(model);
+    if (status?.status === 'exhausted' && (status.blockedUntil || 0) > Date.now()) {
+      console.warn(`[AI Engine] Skipping exhausted model ${model}.`);
+      continue;
+    }
+
     try {
       const response = await ai.models.generateContent({
         model,
@@ -141,6 +154,9 @@ async function callGeminiWithFallback(
           maxOutputTokens: 8192,
         }
       });
+
+      // Reset status on success
+      modelStatuses.set(model, { status: 'healthy' });
 
       const text = response.text || "{}";
       if (!responseSchema) return text;
@@ -160,20 +176,21 @@ async function callGeminiWithFallback(
       const isTransient = err.status === 503 || err.message?.includes('503') || err.message?.includes('high demand') || err.message?.includes('UNAVAILABLE');
       
       if (isQuota) {
-        console.warn(`[AI Engine] Model ${model} quota rate-limited (429). Trying next fallback model...`);
+        console.warn(`[AI Engine] Model ${model} quota rate-limited (429).`);
+        modelStatuses.set(model, { status: 'exhausted', blockedUntil: Date.now() + 60000 }); // Block for 60s
         continue;
       }
 
       if (isTransient) {
-        console.warn(`[AI Engine] Model ${model} transient busy (503), retrying next model...`);
-        continue;
+        console.warn(`[AI Engine] Model ${model} transient busy (503).`);
+        continue; // Retry next model
       }
 
       console.warn(`[AI Engine] Model ${model} failed: ${err.message}. Trying next fallback.`);
     }
   }
 
-  throw lastError || new Error("All Gemini model endpoints failed.");
+  throw lastError || new Error("AI_QUOTA_EXHAUSTED: All Gemini model endpoints are temporarily unavailable.");
 }
 
 

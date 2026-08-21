@@ -309,84 +309,46 @@ interface DatabaseSchema {
 const DATA_DIR = path.join(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'squeeze_db.json');
 
-import { getSupabaseClient } from './supabase.js';
+import { getSupabaseClient, queueSupabaseWrite } from './supabase.js';
 
-const TABLE_MAP: Record<string, string> = {
-  users: 'users',
-  scripts: 'generated_scripts',
-  subscribers: 'email_subscribers',
-  apiKeys: 'api_keys',
-  dailyRewards: 'daily_rewards',
-  studioSessions: 'studio_sessions',
-  studioPairingCodes: 'studio_pairing_codes',
-  studioChanges: 'studio_change_events',
-  studioFiles: 'studio_file_versions',
-  studioConflicts: 'studio_conflicts',
-  studioAuditLogs: 'studio_audit_logs',
-  conversations: 'conversations',
-  messages: 'chat_messages',
-  userMemories: 'user_memories',
-  projectMemories: 'project_memories',
-  conversationMemories: 'conversation_memories',
-  executionMemories: 'execution_memories',
-  memoryEvents: 'memory_events',
-};
-
-const PK_MAP: Record<string, string> = {
-  users: 'id',
-  scripts: 'id',
-  subscribers: 'id',
-  apiKeys: 'id',
-  dailyRewards: 'userId',
-  studioSessions: 'sessionId',
-  studioPairingCodes: 'code',
-  studioChanges: 'changeId',
-  studioFiles: 'id',
-  studioConflicts: 'conflictId',
-  studioAuditLogs: 'id',
-  conversations: 'id',
-  messages: 'id',
-  userMemories: 'id',
-  projectMemories: 'id',
-  conversationMemories: 'id',
-  executionMemories: 'id',
-  memoryEvents: 'id',
-};
+// ...
 
 async function syncUpsert(table: keyof DatabaseSchema, record: any) {
   try {
-    const supabase = getSupabaseClient(true);
-    const mappedTable = TABLE_MAP[table];
-    const pk = PK_MAP[table];
-    if (!mappedTable || !pk) return;
-    
-    const cleanRecord = { ...record };
+    await queueSupabaseWrite(async () => {
+      const supabase = getSupabaseClient(true);
+      const mappedTable = TABLE_MAP[table];
+      const pk = PK_MAP[table];
+      if (!mappedTable || !pk) return;
+      
+      const cleanRecord = { ...record };
 
-    let { error } = await supabase
-      .from(mappedTable)
-      .upsert([cleanRecord], { onConflict: pk });
+      let { error } = await supabase
+        .from(mappedTable)
+        .upsert([cleanRecord], { onConflict: pk });
 
-    // If foreign key violation (e.g. missing user), auto-upsert user first and retry
-    if (error && error.message && error.message.includes('violates foreign key constraint') && cleanRecord.userId) {
-      const data = ensureDb();
-      const parentUser = data.users.find(u => u.id === cleanRecord.userId);
-      if (parentUser) {
-        await supabase.from('users').upsert([parentUser], { onConflict: 'id' });
-        // Retry upserting the original record
-        const retryResult = await supabase
-          .from(mappedTable)
-          .upsert([cleanRecord], { onConflict: pk });
-        error = retryResult.error;
+      // If foreign key violation (e.g. missing user), auto-upsert user first and retry
+      if (error && error.message && error.message.includes('violates foreign key constraint') && cleanRecord.userId) {
+        const data = ensureDb();
+        const parentUser = data.users.find(u => u.id === cleanRecord.userId);
+        if (parentUser) {
+          await supabase.from('users').upsert([parentUser], { onConflict: 'id' });
+          // Retry upserting the original record
+          const retryResult = await supabase
+            .from(mappedTable)
+            .upsert([cleanRecord], { onConflict: pk });
+          error = retryResult.error;
+        }
       }
-    }
 
-    if (error) {
-      // Suppress noisy RLS or connection timeout warnings
-      const msg = error.message || '';
-      if (!msg.includes('row-level security') && !msg.includes('522')) {
-        console.warn(`[Supabase Sync] Upsert to ${mappedTable} failed:`, msg);
+      if (error) {
+        // Suppress noisy RLS or connection timeout warnings
+        const msg = error.message || '';
+        if (!msg.includes('row-level security') && !msg.includes('522')) {
+          console.warn(`[Supabase Sync] Upsert to ${mappedTable} failed:`, msg);
+        }
       }
-    }
+    });
   } catch (err: any) {
     // Network errors (like Cloudflare 522 or timeout) are handled silently by falling back to local cache
   }
@@ -394,26 +356,29 @@ async function syncUpsert(table: keyof DatabaseSchema, record: any) {
 
 async function syncDelete(table: keyof DatabaseSchema, pkValue: string | number) {
   try {
-    const supabase = getSupabaseClient(true);
-    const mappedTable = TABLE_MAP[table];
-    const pk = PK_MAP[table];
-    if (!mappedTable || !pk) return;
+    await queueSupabaseWrite(async () => {
+      const supabase = getSupabaseClient(true);
+      const mappedTable = TABLE_MAP[table];
+      const pk = PK_MAP[table];
+      if (!mappedTable || !pk) return;
 
-    const { error } = await supabase
-      .from(mappedTable)
-      .delete()
-      .eq(pk, pkValue);
+      const { error } = await supabase
+        .from(mappedTable)
+        .delete()
+        .eq(pk, pkValue);
 
-    if (error) {
-      const msg = error.message || '';
-      if (!msg.includes('row-level security') && !msg.includes('522')) {
-        console.warn(`[Supabase Sync] Delete from ${mappedTable} failed:`, msg);
+      if (error) {
+        const msg = error.message || '';
+        if (!msg.includes('row-level security') && !msg.includes('522')) {
+          console.warn(`[Supabase Sync] Delete from ${mappedTable} failed:`, msg);
+        }
       }
-    }
+    });
   } catch (err: any) {
     // Network errors handled silently
   }
 }
+// ...
 
 let hasLoadedFromSupabase = false;
 
