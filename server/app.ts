@@ -1,4 +1,5 @@
 import express from 'express';
+import cors from 'cors';
 import { db } from './db.js';
 import { 
   generateLuauScript, 
@@ -29,6 +30,8 @@ import { executionEventBus, getExecutionHistory, emitExecutionEvent } from './ex
 
 export function createExpressApp() {
   const app = express();
+  
+  app.use(cors({ origin: 'https://squeezeai.vercel.app', credentials: true }));
 
   // JSON Body Parser with increased payload size limit (50mb) for handling full Roblox project files
   app.use(express.json({ limit: '50mb' }));

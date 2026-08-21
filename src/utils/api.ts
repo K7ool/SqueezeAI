@@ -9,6 +9,8 @@ export interface ApiResponse<T = any> {
   isHtmlError?: boolean;
 }
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
+
 /**
  * Safely executes a fetch and parses JSON without throwing SyntaxError on HTML error pages.
  */
@@ -16,8 +18,9 @@ export async function safeFetchJson<T = any>(
   url: string, 
   options?: RequestInit
 ): Promise<ApiResponse<T>> {
+  const fullUrl = url.startsWith('/') ? `${API_BASE}${url}` : url;
   try {
-    const response = await fetch(url, options);
+    const response = await fetch(fullUrl, options);
     const contentType = response.headers.get('content-type') || '';
 
     if (contentType.includes('application/json')) {
