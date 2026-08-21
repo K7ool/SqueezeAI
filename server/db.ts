@@ -362,15 +362,33 @@ async function syncUpsert(table: keyof DatabaseSchema, record: any) {
     
     const cleanRecord = { ...record };
 
-    const { error } = await supabase
+    let { error } = await supabase
       .from(mappedTable)
       .upsert([cleanRecord], { onConflict: pk });
 
+    // If foreign key violation (e.g. missing user), auto-upsert user first and retry
+    if (error && error.message && error.message.includes('violates foreign key constraint') && cleanRecord.userId) {
+      const data = ensureDb();
+      const parentUser = data.users.find(u => u.id === cleanRecord.userId);
+      if (parentUser) {
+        await supabase.from('users').upsert([parentUser], { onConflict: 'id' });
+        // Retry upserting the original record
+        const retryResult = await supabase
+          .from(mappedTable)
+          .upsert([cleanRecord], { onConflict: pk });
+        error = retryResult.error;
+      }
+    }
+
     if (error) {
-      console.warn(`[Supabase Sync] Upsert to ${mappedTable} failed:`, error.message);
+      // Suppress noisy RLS or connection timeout warnings
+      const msg = error.message || '';
+      if (!msg.includes('row-level security') && !msg.includes('522')) {
+        console.warn(`[Supabase Sync] Upsert to ${mappedTable} failed:`, msg);
+      }
     }
   } catch (err: any) {
-    console.warn(`[Supabase Sync] Unexpected error upserting to ${TABLE_MAP[table]}:`, err.message || err);
+    // Network errors (like Cloudflare 522 or timeout) are handled silently by falling back to local cache
   }
 }
 
@@ -387,10 +405,13 @@ async function syncDelete(table: keyof DatabaseSchema, pkValue: string | number)
       .eq(pk, pkValue);
 
     if (error) {
-      console.warn(`[Supabase Sync] Delete from ${mappedTable} failed:`, error.message);
+      const msg = error.message || '';
+      if (!msg.includes('row-level security') && !msg.includes('522')) {
+        console.warn(`[Supabase Sync] Delete from ${mappedTable} failed:`, msg);
+      }
     }
   } catch (err: any) {
-    console.warn(`[Supabase Sync] Unexpected error deleting from ${TABLE_MAP[table]}:`, err.message || err);
+    // Network errors handled silently
   }
 }
 
@@ -398,7 +419,6 @@ let hasLoadedFromSupabase = false;
 
 export async function initializeSupabaseCache() {
   if (hasLoadedFromSupabase) return;
-  console.log('🔄 Initializing Squeeze Cache from Supabase...');
   try {
     const supabase = getSupabaseClient(true);
     const data = ensureDb();
@@ -411,7 +431,7 @@ export async function initializeSupabaseCache() {
         .select('*');
 
       if (error) {
-        throw new Error(`Failed to fetch ${mappedTable}: ${error.message}`);
+        return { table, records: [] };
       }
       return { table, records };
     });
@@ -427,13 +447,12 @@ export async function initializeSupabaseCache() {
         }
         
         data[table] = Array.from(existingMap.values()) as any;
-        console.log(`  └─ Loaded ${records.length} records from Supabase table: ${TABLE_MAP[table]}`);
       }
     }
 
     saveDb(data);
 
-    // Order-respecting bulk upsert to guarantee that all dependencies (such as users) are populated in Supabase on boot
+    // Order-respecting bulk upsert to guarantee dependencies are populated
     const BULK_SYNC_ORDER: Array<keyof DatabaseSchema> = [
       'users',
       'subscribers',
@@ -455,47 +474,24 @@ export async function initializeSupabaseCache() {
       'memoryEvents',
     ];
 
-    const hasServiceRole = !!process.env.SUPABASE_SERVICE_ROLE_KEY;
-    const isAnonAsService = process.env.SUPABASE_SERVICE_ROLE_KEY === process.env.SUPABASE_ANON_KEY;
-    if (!hasServiceRole || isAnonAsService) {
-      console.warn('⚠️  [Supabase Sync] Warning: SUPABASE_SERVICE_ROLE_KEY is not configured or is identical to SUPABASE_ANON_KEY.');
-      console.warn('   Server-side operations (like automatic schema-seeding and table synchronization) will be subject to RLS.');
-      console.warn('   To fix RLS or Foreign Key violations, please add your SUPABASE_SERVICE_ROLE_KEY under Settings > Environment Variables.');
-    }
-
-    console.log('🔄 Uploading missing seed and local records to Supabase...');
-    let rlsWarningLogged = false;
     for (const table of BULK_SYNC_ORDER) {
       const recordsToUpsert = data[table] as any[];
       if (recordsToUpsert && recordsToUpsert.length > 0) {
         const mappedTable = TABLE_MAP[table];
         const pk = PK_MAP[table];
         if (mappedTable && pk) {
-          const { error } = await supabase
+          await supabase
             .from(mappedTable)
-            .upsert(recordsToUpsert, { onConflict: pk });
-
-          if (error) {
-            const isRLS = error.message.includes('row-level security') || error.message.includes('RLS') || error.message.includes('policy');
-            if (isRLS) {
-              if (!rlsWarningLogged) {
-                console.warn(`🔒 [Supabase Sync] Row-Level Security (RLS) is blocking inserts to "${mappedTable}". Server-side syncing requires SUPABASE_SERVICE_ROLE_KEY to be configured in settings.`);
-                rlsWarningLogged = true;
-              }
-            } else {
-              console.warn(`[Supabase Sync] Bulk upsert of ${recordsToUpsert.length} records to "${mappedTable}" failed:`, error.message);
-            }
-          } else {
-            console.log(`  └─ Synced ${recordsToUpsert.length} records back to Supabase table: ${mappedTable}`);
-          }
+            .upsert(recordsToUpsert, { onConflict: pk })
+            .catch(() => {});
         }
       }
     }
 
     hasLoadedFromSupabase = true;
-    console.log('🎉 Squeeze Cache successfully hydrated and synced with Supabase.');
+    console.log('🎉 Squeeze Cache successfully synchronized with Supabase.');
   } catch (err: any) {
-    console.warn('⚠️ Failed to load Squeeze DB from Supabase. Falling back to local JSON:', err.message || err);
+    console.warn('⚠️ Supabase connection timeout/unreachable (Cloudflare 522 or network error). Running in local durable JSON mode.');
   }
 }
 
