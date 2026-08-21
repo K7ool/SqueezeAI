@@ -70,12 +70,13 @@ export interface ChatResponseResult {
   codeReview?: CodeReviewPayload;
   skillsFound?: RobloxSkill[];
   actionPerformed?: {
-    type: 'create_script' | 'update_script' | 'search_skills' | 'debug_fix' | 'explain_concept' | 'analyze_project' | 'multi_file_create';
+    type: 'create_script' | 'update_script' | 'search_skills' | 'debug_fix' | 'explain_concept' | 'analyze_project' | 'multi_file_create' | 'studio_operation';
     summary: string;
     details?: string;
   };
   generatedScript?: GeneratedFilePayload;
   filesGenerated?: GeneratedFilePayload[];
+  studioOperations?: any[]; // Raw operations to execute against Roblox Studio directly
   fileAction?: {
     action: 'created' | 'updated' | 'analyzed';
     filePath: string;
@@ -1653,7 +1654,12 @@ CRITICAL AGENT DIRECTIVES:
 4. FEATURE-FIRST MULTI-FILE ARCHITECTURE (MANDATORY for BUILD / CREATE / MAKE):
    - When the user asks for a feature, system, or command (e.g., "make flying command", "build daily login rewards", "admin commands", "inventory"), you MUST NOT output just a single script.
    - You MUST design and generate a complete multi-file system spanning Server, Client, and Shared configuration, populating the \`filesGenerated\` array with 2 to 4 interdependent files (ServerScriptService service, StarterPlayerScripts controller, ReplicatedStorage shared config / remote).
-   - Ensure all files have complete Luau code, strict typing (--!strict), and zero truncation.`;
+   - Ensure all files have complete Luau code, strict typing (--!strict), and zero truncation.
+   
+5. STUDIO-FIRST EXECUTION (MANDATORY for non-script instances):
+   - When the user explicitly requests to create or modify a Part, Folder, RemoteEvent, or any instance directly (e.g. "create a Part named 1 in Workspace"), DO NOT just generate a Lua script that creates it dynamically.
+   - Instead, populate the \`studioOperations\` JSON array to issue direct commands to Roblox Studio (e.g. \`{ operation: "createInstance", className: "Part", name: "1", parentPath: "Workspace" }\`).
+   - If building a system that requires Folders or RemoteEvents, use \`studioOperations\` to create them.`;
 
     let promptContent = lastMessage;
     if (isExplainMode) {
@@ -1753,6 +1759,25 @@ Directly provide ONLY the appropriate response for intent [${intentResult.intent
             required: ["title", "code", "scriptType", "targetInstance", "filePath"]
           }
         },
+        studioOperations: {
+          type: Type.ARRAY,
+          description: "Raw operations to execute against Roblox Studio directly. E.g. createInstance, setProperty. Use this to construct instances or folders.",
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              operation: { type: Type.STRING, enum: ["createInstance", "deleteInstance", "renameInstance", "moveInstance", "setProperty", "setAttribute"] },
+              className: { type: Type.STRING },
+              parentPath: { type: Type.STRING, description: "Virtual path, e.g. Workspace/Folder" },
+              path: { type: Type.STRING },
+              name: { type: Type.STRING },
+              newName: { type: Type.STRING },
+              newParentPath: { type: Type.STRING },
+              properties: { type: Type.OBJECT },
+              attributes: { type: Type.OBJECT }
+            },
+            required: ["operation"]
+          }
+        },
         fileAction: {
           type: Type.OBJECT,
           properties: {
@@ -1777,6 +1802,7 @@ Directly provide ONLY the appropriate response for intent [${intentResult.intent
     if (!isCodeRequest && !isAnalysisRequest) {
       delete parsed.generatedScript;
       delete parsed.filesGenerated;
+      delete parsed.studioOperations;
       delete parsed.fileAction;
       delete parsed.changePlan;
       if (parsed.actionPerformed?.type === 'create_script' || parsed.actionPerformed?.type === 'update_script') {

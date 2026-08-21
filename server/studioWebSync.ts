@@ -160,6 +160,7 @@ class StudioWebSyncManager {
   private memoryPairingCodes: Map<string, StudioPairingCodeRecord> = new Map(); // code -> record
   private memoryFiles: Map<string, Map<string, SyncFilePayload>> = new Map(); // projectId -> (path/id -> file)
   private memoryTrees: Map<string, StudioProjectTreeItem[]> = new Map(); // projectId -> tree
+  private memoryOperationsQueue: Map<string, any[]> = new Map(); // projectId -> array of ops
 
   constructor() {
     this.hydrateFromDatabase();
@@ -686,7 +687,7 @@ class StudioWebSyncManager {
   // -----------------------------------------------------------
   // 7. PULL PENDING CHANGES (For Studio Plugin)
   // -----------------------------------------------------------
-  public getPendingChangesForStudio(token: string): { success: boolean; changes: SyncChangeEvent[]; error?: string } {
+  public getPendingChangesForStudio(token: string): { success: boolean; changes: SyncChangeEvent[]; operations?: any[]; error?: string } {
     const session = this.memorySessions.get(token) || db.getStudioSessionByToken(token);
     if (!session || session.status === 'disconnected') {
       return { success: false, changes: [], error: 'Session not authenticated, expired, or disconnected.' };
@@ -716,7 +717,69 @@ class StudioWebSyncManager {
       errorMessage: p.errorMessage
     }));
 
-    return { success: true, changes: formatted };
+    // Get pure operations queue
+    const projectOpsQueue = this.memoryOperationsQueue.get(session.projectId) || [];
+    const pendingOps = projectOpsQueue.filter((op: any) => op.status === 'pending');
+    
+    // Convert changes into operations for unified processing in the new plugin
+    const legacyChangesAsOps = formatted.map(c => ({
+      operationId: c.changeId,
+      operation: c.action === 'create' ? 'createScript' : c.action === 'update' ? 'updateScript' : 'deleteScript',
+      path: c.path,
+      className: c.className,
+      source: c.source,
+      status: 'pending'
+    }));
+
+    const combinedOps = [...legacyChangesAsOps, ...pendingOps];
+
+    return { success: true, changes: formatted, operations: combinedOps };
+  }
+
+  // -----------------------------------------------------------
+  // 7.5. ENQUEUE PURE STUDIO OPERATION (Agent Tool Support)
+  // -----------------------------------------------------------
+  public enqueueStudioOperation(
+    projectId: string,
+    operation: {
+      operation: string;
+      className?: string;
+      parentPath?: string;
+      path?: string;
+      name?: string;
+      newName?: string;
+      newParentPath?: string;
+      properties?: any;
+      attributes?: any;
+      source?: string;
+    },
+    sessionId?: string
+  ): { success: boolean; operationId: string } {
+    const opId = 'op_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+    const opRecord = {
+      operationId: opId,
+      projectId,
+      sessionId,
+      ...operation,
+      status: 'pending',
+      timestamp: Date.now()
+    };
+
+    let queue = this.memoryOperationsQueue.get(projectId);
+    if (!queue) {
+      queue = [];
+      this.memoryOperationsQueue.set(projectId, queue);
+    }
+    queue.push(opRecord);
+
+    this.logAudit(projectId, {
+      type: 'studio_operation_queued',
+      author: 'ai',
+      sessionId,
+      details: "Enqueued studio operation: " + operation.operation + " on " + (operation.path || operation.name || "target")
+    });
+
+    return { success: true, operationId: opId };
   }
 
   // -----------------------------------------------------------
@@ -737,13 +800,25 @@ class StudioWebSyncManager {
     this.memorySessions.set(token, session);
 
     const actualStatus = status === 'failed' ? 'failed' : 'applied';
-    const updated = db.acknowledgeStudioChange(changeIdOrEventId, actualStatus, errorMsg);
+    let updated = false;
+
+    if (changeIdOrEventId.startsWith('op_')) {
+        const queue = this.memoryOperationsQueue.get(session.projectId) || [];
+        const op = queue.find((o: any) => o.operationId === changeIdOrEventId);
+        if (op) {
+            op.status = actualStatus;
+            op.errorMessage = errorMsg;
+            updated = true;
+        }
+    } else {
+        updated = db.acknowledgeStudioChange(changeIdOrEventId, actualStatus, errorMsg);
+    }
 
     this.logAudit(session.projectId, {
       type: actualStatus === 'applied' ? 'studio_acknowledged' : 'studio_apply_failed',
       author: 'studio',
       sessionId: session.sessionId,
-      details: `Studio ${actualStatus} change (ID: ${changeIdOrEventId})${errorMsg ? ' - Error: ' + errorMsg : ''}`
+      details: "Studio " + actualStatus + " change (ID: " + changeIdOrEventId + ")" + (errorMsg ? " - Error: " + errorMsg : "")
     });
 
     return { success: updated };
@@ -966,6 +1041,12 @@ class StudioWebSyncManager {
       code: f.source,
       scriptType: f.className === 'Script' ? 'Server Script' : f.className
     }));
+  }
+
+  public getOperationStatus(projectId: string, operationId: string): string | null {
+    const queue = this.memoryOperationsQueue.get(projectId) || [];
+    const op = queue.find((o: any) => o.operationId === operationId);
+    return op ? op.status : null;
   }
 }
 

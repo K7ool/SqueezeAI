@@ -20,7 +20,7 @@ import {
 import { createCheckoutSession, handleStripeWebhook, PLANS } from './stripe.js';
 import { studioWebSync } from './studioWebSync.js';
 import { OFFICIAL_ROBLOX_STUDIO_PLUGIN_SOURCE } from './robloxStudioPluginSource.js';
-import { executeStudioPublish } from './agentStudioTool.js';
+import { executeStudioPublish, executeStudioOperation } from './agentStudioTool.js';
 
 export function createExpressApp() {
   const app = express();
@@ -379,7 +379,16 @@ export function createExpressApp() {
         }
       }
 
-      res.json({ success: true, ...response, studioSyncResult });
+      // Also enqueue any raw operations if they exist
+      const operationResults: any[] = [];
+      if (response.studioOperations && Array.isArray(response.studioOperations)) {
+        for (const op of response.studioOperations) {
+          const resOp = await executeStudioOperation(projectId, op);
+          operationResults.push({ operation: op.operation, result: resOp });
+        }
+      }
+
+      res.json({ success: true, ...response, studioSyncResult, operationResults });
     } catch (err: any) {
       console.error('Error in /api/chat:', err);
       res.status(500).json({ error: err.message || 'Chat assistant encountered an error.' });
@@ -712,7 +721,7 @@ export function createExpressApp() {
     if (!token) {
       return res.status(401).json({ success: false, error: { code: 'AUTH_REQUIRED', message: 'Authorization token required.' } });
     }
-    const changeId = req.body.changeId || req.body.eventId;
+    const changeId = req.body.operationId || req.body.changeId || req.body.eventId;
     const { status, errorMessage } = req.body;
     if (!changeId) {
       return res.status(400).json({ success: false, error: { code: 'MISSING_CHANGE_ID', message: 'changeId or eventId required.' } });
@@ -723,6 +732,19 @@ export function createExpressApp() {
 
   app.post('/api/studio/ack', handleAck);
   app.post('/api/sync/ack', handleAck);
+  app.post('/api/studio/operations/ack', handleAck);
+
+  const handlePullOperations = (req: any, res: any) => {
+    const authHeader = req.headers['authorization'] || '';
+    const token = authHeader.replace(/^Bearer\s+/i, '') || (req.query.token as string);
+    if (!token) {
+      return res.status(401).json({ success: false, error: { code: 'AUTH_REQUIRED', message: 'Authorization token required.' } });
+    }
+    const result = studioWebSync.getPendingChangesForStudio(token);
+    res.json(result);
+  };
+
+  app.get('/api/studio/operations/pending', handlePullOperations);
 
   // 10. Project Snapshot & DataModel Dump
   const handleSnapshot = (req: any, res: any) => {

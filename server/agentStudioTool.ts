@@ -102,3 +102,68 @@ export async function executeStudioPublish(projectId: string, files: { path: str
     };
   }
 }
+
+export async function executeStudioOperation(projectId: string, operation: any): Promise<AgentStudioExecutionResult> {
+  try {
+    const session = studioWebSync.getSession(projectId);
+    const isOnline = session ? (session.status === 'connected' && Date.now() - session.lastHeartbeat < 45000) : false;
+
+    if (!isOnline) {
+      return {
+        success: false,
+        status: 'DISCONNECTED',
+        summary: 'Roblox Studio session is offline or missing heartbeats.'
+      };
+    }
+
+    const res = studioWebSync.enqueueStudioOperation(projectId, operation, session?.sessionId);
+
+    if (res.success) {
+      // Record audit log
+      db.addStudioAuditLog(projectId, {
+        sessionId: session?.sessionId,
+        type: 'AI_PUBLISH',
+        author: 'ai',
+        details: `Pushed operation ${operation.operation} to Roblox Studio WebSync queue.`,
+        metadata: { operationId: res.operationId }
+      });
+
+      // Verification loop
+      let finalStatus: AgentStudioExecutionResult["status"] = 'QUEUED';
+      let summary = `Successfully enqueued operation ${operation.operation}.`;
+      for (let i = 0; i < 6; i++) {
+        await new Promise(r => setTimeout(r, 500));
+        const status = studioWebSync.getOperationStatus(projectId, res.operationId);
+        if (status === 'applied') {
+          finalStatus = 'VERIFIED';
+          summary = `Operation ${operation.operation} was successfully verified by Studio.`;
+          break;
+        } else if (status === 'failed') {
+          finalStatus = 'FAILED';
+          summary = `Operation ${operation.operation} failed to apply in Studio.`;
+          break;
+        }
+      }
+
+      return {
+        success: finalStatus === 'VERIFIED' || finalStatus === 'QUEUED',
+        status: finalStatus,
+        summary
+      };
+    } else {
+      return {
+        success: false,
+        status: 'FAILED',
+        summary: 'Failed to enqueue operation.'
+      };
+    }
+  } catch (err: any) {
+    console.error('[AgentStudioExecution] Error publishing to studio:', err);
+    return {
+      success: false,
+      status: 'FAILED',
+      summary: 'Failed to execute WebSync publish.',
+      details: err.message || 'Unknown server error.'
+    };
+  }
+}
