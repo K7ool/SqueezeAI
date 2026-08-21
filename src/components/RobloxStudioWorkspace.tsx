@@ -15,7 +15,8 @@ import {
   ExternalLink,
   ChevronRight,
   Split,
-  Eye
+  Eye,
+  X
 } from 'lucide-react';
 import { RobloxProject, ProjectFile } from '../types/project';
 import { 
@@ -126,6 +127,22 @@ export const RobloxStudioWorkspace: React.FC<RobloxStudioWorkspaceProps> = ({
     }
   };
 
+  const handleDisconnect = async () => {
+    if (!syncState?.session?.token) {
+      onShowToast('❌ No active session token found to disconnect');
+      return;
+    }
+    const { disconnectStudioSession } = await import('../utils/syncClient');
+    const success = await disconnectStudioSession(syncState.session.token);
+    if (success) {
+      onShowToast('✓ Studio session disconnected');
+      const state = await fetchStudioSyncStatus(project.id);
+      if (state) setSyncState(state);
+    } else {
+      onShowToast('❌ Failed to disconnect session');
+    }
+  };
+
   const handleResolve = async (strategy: 'keep_website' | 'keep_studio' | 'manual_merge') => {
     if (!selectedConflict || isResolving) return;
     setIsResolving(true);
@@ -214,6 +231,14 @@ export const RobloxStudioWorkspace: React.FC<RobloxStudioWorkspaceProps> = ({
           >
             {isSyncingAll ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ArrowRightLeft className="w-3.5 h-3.5" />}
             <span>Sync All to Studio</span>
+          </button>
+          
+          <button
+            onClick={handleDisconnect}
+            className="px-3.5 py-1.5 rounded-lg bg-[#FF7B72] hover:bg-[#ff8f88] text-xs font-mono font-bold text-[#0B120D] flex items-center gap-1.5 cursor-pointer shadow-sm"
+          >
+            <X className="w-3.5 h-3.5" />
+            <span>Disconnect</span>
           </button>
         </div>
       </div>

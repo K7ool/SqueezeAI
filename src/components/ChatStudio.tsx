@@ -229,6 +229,9 @@ ${project.files.map(f => `- ${f.path} [${f.scriptType} -> ${f.targetInstance}] (
 
       if (apiResult.ok && apiResult.data) {
         data = apiResult.data;
+        if (data.success === false && data.error) {
+          throw new Error(data.error.message || data.error);
+        }
       } else {
         // Fallback for offline or static deployments
         console.warn('API returned non-OK or non-JSON, using client fallback:', apiResult.error);

@@ -332,7 +332,7 @@ export function createExpressApp() {
             success: false,
             error: {
               code: 'STUDIO_OFFLINE',
-              message: '❌ STUDIO_OFFLINE\nNo active Squeeze WebSync plugin session was detected.\n\nRequired:\n• Open Roblox Studio\n• Enable the Squeeze WebSync plugin\n• Connect the current project\n\nNo changes were made.'
+              message: '❌ ROBLOX STUDIO OFFLINE\n\nThe WebSync Plugin is not currently connected.\n\nNo changes were made.\n\nOpen Roblox Studio and connect the Squeeze WebSync Plugin, then try again.'
             },
             studioConnectionStatus: 'DISCONNECTED',
             summary: 'Studio is offline. No changes were made.'
@@ -684,7 +684,16 @@ export function createExpressApp() {
       );
 
       if (result.status === 'conflict') {
-        return res.status(409).json(result);
+        return res.status(409).json({
+          success: false,
+          error: {
+            code: 'VERSION_CONFLICT',
+            message: result.error || 'Studio contains a newer version.',
+            expectedVersion: result.expectedVersion,
+            currentVersion: result.currentVersion
+          },
+          conflict: result.conflict
+        });
       }
 
       res.json(result);
@@ -793,8 +802,18 @@ export function createExpressApp() {
 
   // 13. Studio Plugin Source Code download
   const handlePluginSource = (req: any, res: any) => {
+    const host = req.headers['x-forwarded-host'] || req.headers.host;
+    const proto = req.headers['x-forwarded-proto'] || req.protocol;
+    const origin = `${proto}://${host}`;
+    
+    // Replace the default localhost backend URL with the actual deployment URL
+    const customizedSource = OFFICIAL_ROBLOX_STUDIO_PLUGIN_SOURCE.replace(
+      /local DEFAULT_BACKEND_URL = ".*"/,
+      `local DEFAULT_BACKEND_URL = "${origin}/api/studio"`
+    );
+
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.send(OFFICIAL_ROBLOX_STUDIO_PLUGIN_SOURCE);
+    res.send(customizedSource);
   };
 
   app.get('/api/studio/plugin-source', handlePluginSource);

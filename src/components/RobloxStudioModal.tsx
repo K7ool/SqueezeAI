@@ -12,6 +12,9 @@ export const RobloxStudioModal: React.FC<RobloxStudioModalProps> = ({ isOpen, on
 
   if (!isOpen) return null;
 
+  const currentHost = typeof window !== 'undefined' ? window.location.origin : "https://squeeze.gg";
+  const apiEndpoint = `${currentHost}/api/studio`;
+
   const injectorCode = `-- Squeeze Roblox Studio Live Injector
 -- Paste this ModuleScript into ServerScriptService -> SqueezeSync
 
@@ -21,7 +24,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local StarterPlayer = game:GetService("StarterPlayer")
 
 local SqueezeModule = {}
-local API_ENDPOINT = "https://squeeze.gg/api"
+local API_ENDPOINT = "${apiEndpoint}"
 local API_TOKEN = "sqz_live_YOUR_TOKEN_HERE" -- Replace with your token from Squeeze Dashboard
 
 function SqueezeModule.SyncScript(scriptPayload)
