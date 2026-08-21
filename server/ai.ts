@@ -355,9 +355,157 @@ export interface UserTaskSpecification {
   targetLocation?: string;
   requestedName?: string;
   forbiddenUnrelatedSystems: string[];
+  structuredIntent?: {
+    goal: string;
+    feature: string;
+    trigger: {
+      type: string;
+      value: string;
+    };
+    condition: {
+      type: string;
+    };
+    action: {
+      type: string;
+      target: string;
+    };
+    target: {
+      type: string;
+    };
+    platform: string;
+  };
 }
 
-export function extractTaskSpecification(prompt: string): UserTaskSpecification {
+export function getConciseSemanticFeatureName(prompt: string): string {
+  const p = prompt.toLowerCase().trim();
+  
+  // 1. Direct command patterns
+  if (p.includes('/ok') && (p.includes('kick') || p.includes('out'))) return "OK Kick Command";
+  if (p.includes('/fly') || p.includes('fly command')) return "Fly Command";
+  if (p.includes('/kick')) return "Kick Command";
+  if (p.includes('/kill')) return "Kill Command";
+  if (p.includes('/speed')) return "Speed Command";
+  
+  // 2. Event + Action patterns
+  if (p.includes('touch') && p.includes('coin')) return "Touch Coin Reward";
+  if (p.includes('touch') && p.includes('part') && p.includes('kill')) return "Kill Block";
+  if (p.includes('touch') && p.includes('part') && p.includes('teleport')) return "Teleport Pad";
+  if (p.includes('touch') && p.includes('give')) return "Touch Reward Pad";
+  if (p.includes('touch')) return "Touch Interaction";
+  
+  if ((p.includes('death') || p.includes('dies') || p.includes('dead')) && p.includes('teleport')) return "Death Teleport";
+  if (p.includes('death') || p.includes('dies') || p.includes('dead')) return "Death Handler";
+  
+  if (p.includes('click') && p.includes('button') && p.includes('shop')) return "Open Shop Button";
+  if (p.includes('click') && p.includes('button') && p.includes('ui')) return "UI Toggle Button";
+  if (p.includes('click') && p.includes('sword')) return "Sword Click Attack";
+  if (p.includes('click') && p.includes('part')) return "Part Click Interaction";
+  
+  if (p.includes('part') && (p.includes('bigger') || p.includes('smaller') || p.includes('scale') || p.includes('resize'))) return "Resize Part";
+  if (p.includes('part') && p.includes('workspace')) return "Part Creator";
+  
+  if (p.includes('sword') && (p.includes('attack') || p.includes('click') || p.includes('fight'))) return "Sword Attack System";
+  
+  // 3. Fallback: extract key words (nouns, verbs) rather than taking the full sentence
+  const stopWords = new Set([
+    'a', 'an', 'the', 'make', 'create', 'build', 'add', 'implement', 'write', 'code', 'script',
+    'when', 'i', 'type', 'write', 'it', 'me', 'him', 'her', 'them', 'they', 'we', 'us', 'you',
+    'if', 'then', 'on', 'after', 'before', 'and', 'or', 'but', 'so', 'that', 'this', 'to', 'for',
+    'in', 'inside', 'under', 'at', 'with', 'out', 'up', 'down', 'from', 'of', 'about', 'by', 'does', 'do'
+  ]);
+  
+  const words = prompt.replace(/[^a-zA-Z0-9\s\/]/g, ' ')
+                      .split(/\s+/)
+                      .map(w => w.toLowerCase())
+                      .filter(w => w.length > 1 && !stopWords.has(w));
+                      
+  if (words.length > 0) {
+    const selectedWords = words.slice(0, 3);
+    return selectedWords.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+  }
+  
+  return "Custom Feature";
+}
+
+function getLocalStructuredIntent(prompt: string, featureName: string) {
+  const p = prompt.toLowerCase();
+  
+  let goal = "create_script";
+  if (p.includes('delete') || p.includes('destroy')) goal = "delete_script";
+  else if (p.includes('move')) goal = "move_script";
+  else if (p.includes('rename')) goal = "rename_script";
+  else if (p.includes('change') || p.includes('color') || p.includes('scale') || p.includes('resize') || p.includes('anchor')) goal = "modify_property";
+
+  let triggerType = "lifecycle_init";
+  let triggerValue = "init";
+  if (p.includes('/') || p.includes('type') || p.includes('command')) {
+    triggerType = "chat_command";
+    const cmdMatch = prompt.match(/\/([a-zA-Z0-9_]+)/);
+    triggerValue = cmdMatch ? cmdMatch[0] : "/cmd";
+  } else if (p.includes('touch') || p.includes('touches')) {
+    triggerType = "touched_event";
+    triggerValue = "Touch";
+  } else if (p.includes('click') || p.includes('clicked') || p.includes('press')) {
+    triggerType = "click_event";
+    triggerValue = "Click";
+  } else if (p.includes('die') || p.includes('dies') || p.includes('death')) {
+    triggerType = "player_death";
+    triggerValue = "Died";
+  } else if (p.includes('join') || p.includes('enter') || p.includes('enters')) {
+    triggerType = "player_joined";
+    triggerValue = "PlayerAdded";
+  }
+
+  let actionType = "create_mechanic";
+  let actionTarget = "system";
+  if (p.includes('kick')) {
+    actionType = "kick_player";
+    actionTarget = "triggering_player";
+  } else if (p.includes('kill')) {
+    actionType = "kill_player";
+    actionTarget = "triggering_player";
+  } else if (p.includes('fly')) {
+    actionType = "enable_flight";
+    actionTarget = "triggering_player";
+  } else if (p.includes('teleport')) {
+    actionType = "teleport_player";
+    actionTarget = "triggering_player";
+  } else if (p.includes('coin') || p.includes('give') || p.includes('reward')) {
+    actionType = "give_currency";
+    actionTarget = "triggering_player";
+  } else if (p.includes('bigger') || p.includes('smaller') || p.includes('resize') || p.includes('scale')) {
+    actionType = "resize_part";
+    actionTarget = "part";
+  }
+
+  let targetType = "Script";
+  if (p.includes('part')) targetType = "Part";
+  else if (p.includes('sword')) targetType = "Sword";
+  else if (p.includes('button')) targetType = "ScreenGui";
+  else if (p.includes('player')) targetType = "Player";
+
+  return {
+    goal,
+    feature: featureName,
+    trigger: {
+      type: triggerType,
+      value: triggerValue
+    },
+    condition: {
+      type: triggerType === "chat_command" ? "player_uses_command" : triggerType === "touched_event" ? "player_touches_part" : "player_triggers_action"
+    },
+    action: {
+      type: actionType,
+      target: actionTarget
+    },
+    target: {
+      type: targetType
+    },
+    platform: "Roblox"
+  };
+}
+
+export function runLocalTaskSpecification(prompt: string): UserTaskSpecification {
   const p = prompt.toLowerCase();
   
   const namedMatch = prompt.match(/(?:named|called|with name)\s+["']?([a-zA-Z0-9_\-\.]+)/i) ||
@@ -386,10 +534,9 @@ export function extractTaskSpecification(prompt: string): UserTaskSpecification 
   if (p.includes('save') || p.includes('persistence')) requestedBehaviors.push('data persistence');
   if (p.includes('admin') || p.includes('command')) requestedBehaviors.push('admin command execution');
 
-  let featureName = prompt.replace(/^(make|create|build|add|implement)\s+/i, '').trim();
-  if (featureName.length > 50) {
-    featureName = featureName.substring(0, 50);
-  }
+  const featureName = getConciseSemanticFeatureName(prompt);
+  // Transform semantic feature name into clean PascalCase for file/instance name fallback
+  const requestedNameClean = requestedName || featureName.replace(/[^a-zA-Z0-9]/g, '');
 
   const forbiddenUnrelatedSystems = ['PlayerSessions', 'Autosave', 'BindToClose', 'AdminCommands', 'DailyRewardService'];
   if (p.includes('admin')) {
@@ -401,14 +548,132 @@ export function extractTaskSpecification(prompt: string): UserTaskSpecification 
     if (idx !== -1) forbiddenUnrelatedSystems.splice(idx, 1);
   }
 
+  const structuredIntent = getLocalStructuredIntent(prompt, featureName);
+
   return {
-    featureName: featureName || "Roblox Feature",
+    featureName,
     requestedObjects,
     requestedBehaviors,
     targetLocation,
-    requestedName,
-    forbiddenUnrelatedSystems
+    requestedName: requestedNameClean,
+    forbiddenUnrelatedSystems,
+    structuredIntent
   };
+}
+
+export async function extractTaskSpecification(prompt: string, apiKey?: string): Promise<UserTaskSpecification> {
+  const localSpec = runLocalTaskSpecification(prompt);
+  
+  if (!apiKey) {
+    return localSpec;
+  }
+  
+  try {
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+    });
+    
+    const systemInstruction = `You are Squeeze's AI Semantic Intent Parser and Roblox Architect.
+Your task is to analyze the user's natural language request and transform it into a clean, highly structured user intent specification.
+
+STRICT INSTRUCTIONS:
+1. SEMANTIC NAMING: Do NOT convert the entire sentence or long phrases into file names, script names, or feature names. Define a clean, professional, concise PascalCase name (e.g., "OKKickCommand", "FlyCommand", "TouchReward") and semantic feature name (e.g. "OK Kick Command", "Touch Coin Reward", "Death Teleport") instead of "AScriptWhenITypeOkThenItKickMeOutService".
+2. UNDERSTAND THE WHOLE SENTENCE: Identify the target trigger, condition, action, and targets.
+3. MAP TO ROBLOX APIS: Map me/player -> Player, "kick me" -> Player:Kick(), "kill me" -> Humanoid.Health = 0, "when touch" -> BasePart.Touched, "when dies" -> Humanoid.Died, etc.
+4. RESOLVE PRONOUNS AND SEQUENCE: Determine targets of pronouns (e.g. "make a part... and make it bigger" -> 'it' means Part) and steps of execution sequences.
+5. SECURITY-AWARE: If a chat command is created (e.g. /kick), check who can trigger it, who is affected, and enforce server-authoritative logic.`;
+
+    const responseSchema = {
+      type: Type.OBJECT,
+      properties: {
+        featureName: { 
+          type: Type.STRING, 
+          description: "Concise, elegant title of the feature or command (e.g. 'OK Kick Command', 'Fly Command', 'Touch Reward System'). NEVER use a full sentence." 
+        },
+        requestedObjects: { 
+          type: Type.ARRAY, 
+          items: { type: Type.STRING },
+          description: "List of Roblox objects explicitly or implicitly requested (e.g. Part, RemoteEvent, Folder, Model, ScreenGui, TextButton)." 
+        },
+        requestedBehaviors: { 
+          type: Type.ARRAY, 
+          items: { type: Type.STRING },
+          description: "List of custom behaviors or actions requested (e.g. player_kick, flying, teleporting, add_leaderstats)." 
+        },
+        targetLocation: { 
+          type: Type.STRING, 
+          description: "Appropriate Roblox path location where the script/instance should reside (e.g. 'ServerScriptService', 'ReplicatedStorage', 'Workspace', 'StarterGui')." 
+        },
+        requestedName: { 
+          type: Type.STRING, 
+          description: "Concise, clean PascalCase name for the main script or service (e.g. 'OKKickCommand', 'FlyCommand', 'TouchReward', 'TeleportOnDeath'). NEVER generate a sentence-based name." 
+        },
+        forbiddenUnrelatedSystems: { 
+          type: Type.ARRAY, 
+          items: { type: Type.STRING },
+          description: "Systems to explicitly avoid creating or modifying unless requested (e.g. PlayerSessions, Autosave)." 
+        },
+        structuredIntent: {
+          type: Type.OBJECT,
+          properties: {
+            goal: { type: Type.STRING },
+            feature: { type: Type.STRING },
+            trigger: {
+              type: Type.OBJECT,
+              properties: {
+                type: { type: Type.STRING },
+                value: { type: Type.STRING }
+              },
+              required: ["type"]
+            },
+            condition: {
+              type: Type.OBJECT,
+              properties: {
+                type: { type: Type.STRING }
+              },
+              required: ["type"]
+            },
+            action: {
+              type: Type.OBJECT,
+              properties: {
+                type: { type: Type.STRING },
+                target: { type: Type.STRING }
+              },
+              required: ["type", "target"]
+            },
+            target: {
+              type: Type.OBJECT,
+              properties: {
+                type: { type: Type.STRING }
+              },
+              required: ["type"]
+            },
+            platform: { type: Type.STRING }
+          },
+          required: ["goal", "feature", "trigger", "condition", "action", "target", "platform"]
+        }
+      },
+      required: ["featureName", "requestedObjects", "requestedBehaviors", "requestedName", "forbiddenUnrelatedSystems", "structuredIntent"]
+    };
+
+    const parsed = await callGeminiWithFallback(ai, prompt, systemInstruction, responseSchema);
+    if (parsed && parsed.featureName && parsed.requestedName) {
+      return {
+        featureName: parsed.featureName,
+        requestedObjects: parsed.requestedObjects || [],
+        requestedBehaviors: parsed.requestedBehaviors || [],
+        targetLocation: parsed.targetLocation || localSpec.targetLocation,
+        requestedName: parsed.requestedName,
+        forbiddenUnrelatedSystems: parsed.forbiddenUnrelatedSystems || localSpec.forbiddenUnrelatedSystems,
+        structuredIntent: parsed.structuredIntent
+      };
+    }
+  } catch (err) {
+    console.error("[Semantic Parser] Failed to parse semantic intent, falling back to local:", err);
+  }
+  
+  return localSpec;
 }
 
 export function validateSemanticRelevance(
@@ -935,7 +1200,7 @@ print("💾 [SafeDataStoreService] Persistence pipeline active.")`;
   }
 
   // Feature-Specific Dynamic Fallback (NEVER generic GameSystem!)
-  const rawTitle = prompt.replace(/^(make|create|build|add|implement)\s+/i, '').trim();
+  const rawTitle = getConciseSemanticFeatureName(prompt);
   const pascalName = rawTitle.replace(/[^a-zA-Z0-9]/g, ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join('') || "CustomFeature";
   const featureTitle = pascalName.endsWith('Script') || pascalName.endsWith('Service') || pascalName.endsWith('System') ? pascalName : `${pascalName}Service`;
 
@@ -2418,7 +2683,7 @@ ${previousIdeas.length > 0 ? previousIdeas.map((id: any) => `- Name: ${id.name}`
       `Example Recipe:\n${s.luauSnippet}\n`
     ).join('\n---\n');
 
-    const spec = extractTaskSpecification(lastMessage);
+    const spec = await extractTaskSpecification(lastMessage, apiKey);
 
     const systemInstruction = `You are Squeeze, an elite Principal Roblox Luau Engineer, Systems Architect, and Autonomous Game Development Co-Pilot.
 You have mastery of all Roblox Engine APIs (DataStoreService, MemoryStoreService, MessagingService, TweenService, RunService, TextChatService, PathfindingService, ContextActionService, ProximityPromptService, CollectionService, PhysicsService, etc.), strict Luau typing (--!strict), and scalable production game architecture.
@@ -2428,18 +2693,21 @@ INTENT MODE: ${intentResult.mode}
 REQUIRES CODE GENERATION: ${isCodeRequest}
 
 LOCKED USER TASK SPECIFICATION (STRICT DIRECTIVE - USER REQUEST = SPECIFICATION):
-- Feature: ${spec.featureName}
+- Feature Name: ${spec.featureName}
+- Main Script Name: ${spec.requestedName}
 - Requested Objects/Entities: ${spec.requestedObjects.length > 0 ? spec.requestedObjects.join(', ') : 'N/A'}
 - Requested Behaviors: ${spec.requestedBehaviors.length > 0 ? spec.requestedBehaviors.join(', ') : 'N/A'}
 - Requested Target Location: ${spec.targetLocation || 'Default Explorer path for feature'}
-- Requested Exact Name: ${spec.requestedName || 'Inferred from feature name'}
 - FORBIDDEN UNRELATED SYSTEMS: ${spec.forbiddenUnrelatedSystems.join(', ')}
+
+STRUCTURED SEMANTIC INTENT:
+${spec.structuredIntent ? JSON.stringify(spec.structuredIntent, null, 2) : "N/A"}
 
 ABSOLUTE SPECIFICATION RULES:
 1. BUILD EXACTLY WHAT WAS REQUESTED:
-   - If user asks for "make a flying bird script", build a FLYING BIRD script or system.
-   - If user asks for "create a Part named 1 in Workspace", create a Part whose Name is EXACTLY "1" and Parent is Workspace.
-   - If user asks for "create a RemoteEvent named FlyRemote in ReplicatedStorage.Remotes", create RemoteEvent named "FlyRemote" in ReplicatedStorage.Remotes.
+   - Identify the COMPLETE meaning of the user sentence before generating file names, scripts, architecture, or code.
+   - Use the parsed STRUCTURED SEMANTIC INTENT (Trigger, Condition, Action, Target, Platform, Constraints) as your direct implementation specification.
+   - NEVER name files using entire user sentences. For example, instead of AScriptWhenITypeOkThenItKickMeOutService, use the semantic name "${spec.requestedName || 'FeatureCommand'}".
    - NEVER generate generic game systems (PlayerSessions, Autosave, AdminSystem, DailyRewards) unless explicitly requested.
 2. PRESERVE USER INTENT:
    - User Request = SPECIFICATION of WHAT to build.
@@ -2448,7 +2716,16 @@ ABSOLUTE SPECIFICATION RULES:
 3. STUDIO OPERATIONS FOR INSTANCES:
    - When creating Parts, RemoteEvents, Folders, Models, or UI instances, ALWAYS populate the studioOperations JSON array to issue direct commands to Roblox Studio.
 4. FILE NAMING:
-   - Name files meaningfully according to the feature (e.g. FlyingBird.server.luau, BirdFlightController.client.luau).`;
+   - Name files meaningfully and concisely according to the semantic feature (e.g. ${spec.requestedName || 'Feature'}Service.server.luau).
+
+MANDATORY RESPONSE EXPLANATION HEADER:
+At the very beginning of your 'message' response, you must briefly output exactly these four structured lines describing your semantic understanding (adapted to the current request, no prefix/intro, no formatting, no bold markers, no markdown blocks, just raw plain text):
+Understanding request: "<brief 1-sentence description of the trigger and action>"
+Planning: "<brief 1-sentence description of the strategy, e.g. using existing services>"
+Implementing: "<brief 1-sentence description of the code files or instances being added/updated>"
+Verifying: "<brief 1-sentence description of the testing/verification criteria>"
+
+Followed by your standard concise developer explanation. Do not use conversational filler or meta-commentary.`;
 
     let promptContent = lastMessage;
     if (isExplainMode) {
