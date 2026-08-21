@@ -1,44 +1,105 @@
 import { RobloxSkill, searchRobloxSkills } from "./robloxSkillsDb.js";
 import { ProjectFileInfo, analyzeProjectCodebase } from "./ai.js";
 
-export type AgentIntent = 
-  | 'EXPLAIN'          // Explaining a snippet or script without generating replacement code
-  | 'ANALYZE'          // Deep analysis of a script/system
-  | 'REVIEW'           // Code review (security, memory, networking, quality)
-  | 'DEBUG'            // Diagnose root cause of error/bug
-  | 'FIX'              // Apply targeted bug fix to specific code
-  | 'MODIFY'           // Modify/tweak existing implementation
-  | 'BUILD'            // Build a requested system/feature from scratch
-  | 'CREATE'           // Create a new file/module
-  | 'REFACTOR'         // Refactor existing code structure
-  | 'OPTIMIZE'         // Performance/memory optimization
-  | 'READ_PROJECT'     // Comprehensive project audit
-  | 'SEARCH_PROJECT'   // Locate where specific logic exists in project
-  | 'GREETING';        // Friendly developer greeting
+export type AgentOperationIntent =
+  | 'INSTANCE_OPERATION'
+  | 'SCRIPT_CREATE'
+  | 'SCRIPT_UPDATE'
+  | 'SCRIPT_DELETE'
+  | 'SCRIPT_MOVE'
+  | 'SCRIPT_RENAME'
+  | 'FEATURE_BUILD'
+  | 'DEBUG'
+  | 'EXPLAIN'
+  | 'PROJECT_QUERY'
+  | 'STUDIO_SYNC'
+  | 'LOCAL_FILE_OPERATION'
+  | 'GREETING';
+
+export type AgentIntent = AgentOperationIntent;
+
+export interface StructuredInstanceIntent {
+  operation: 'createInstance' | 'renameInstance' | 'moveInstance' | 'deleteInstance' | 'setProperty' | 'setAttribute';
+  className?: string;       // e.g. "Part", "Folder", "RemoteEvent", "RemoteFunction", "Model", "ScreenGui", "Frame"
+  name?: string;            // e.g. "1", "Admin", "FlyRemote"
+  parentPath?: string;      // Normalized path e.g. "Workspace", "ReplicatedStorage", "ReplicatedStorage/Remotes"
+  newName?: string;         // for renameInstance
+  newParentPath?: string;   // for moveInstance
+  propertyName?: string;    // for setProperty
+  propertyValue?: any;      // for setProperty
+  attributeName?: string;   // for setAttribute
+  attributeValue?: any;     // for setAttribute
+  properties?: Record<string, any>;
+}
+
+export interface StructuredScriptIntent {
+  operation: 'createScript' | 'updateScript' | 'deleteScript' | 'moveScript' | 'renameScript';
+  className?: 'Script' | 'LocalScript' | 'ModuleScript';
+  name?: string;
+  parentPath?: string;
+  path?: string;
+  newName?: string;
+  newParentPath?: string;
+  source?: string;
+}
 
 export interface DetectedIntentResult {
-  intent: AgentIntent;
+  intent: AgentOperationIntent;
   confidence: number;
   reason: string;
   hasCodeInPrompt: boolean;
   requiresCodeGeneration: boolean;
-  mode: 'EXPLAIN_MODE' | 'ANALYSIS_MODE' | 'REVIEW_MODE' | 'DEBUG_MODE' | 'BUILD_MODE' | 'PROJECT_MODE' | 'GREETING_MODE';
+  mode: 'INSTANCE_MODE' | 'SCRIPT_MODE' | 'FEATURE_MODE' | 'DEBUG_MODE' | 'EXPLAIN_MODE' | 'PROJECT_MODE' | 'SYNC_MODE' | 'GREETING_MODE';
+  structuredInstanceIntent?: StructuredInstanceIntent;
+  structuredScriptIntent?: StructuredScriptIntent;
+  targetPathNormalized?: string;
   skillsRequired: string[];
 }
 
 /**
+ * Normalizes Roblox path strings (e.g. "work space" -> "Workspace", "ReplicatedStorage.Remotes" -> "ReplicatedStorage/Remotes")
+ */
+export function normalizeRobloxPath(rawPath?: string): string {
+  if (!rawPath || !rawPath.trim()) return 'Workspace';
+  let clean = rawPath.trim();
+  clean = clean.replace(/^(?:in|inside|under|at|on)\s+/i, '');
+
+  clean = clean.replace(/work\s*space/i, 'Workspace');
+  clean = clean.replace(/replicated\s*storage/i, 'ReplicatedStorage');
+  clean = clean.replace(/server\s*script\s*service/i, 'ServerScriptService');
+  clean = clean.replace(/server\s*storage/i, 'ServerStorage');
+  clean = clean.replace(/starter\s*gui/i, 'StarterGui');
+  clean = clean.replace(/starter\s*player\s*scripts/i, 'StarterPlayer.StarterPlayerScripts');
+  clean = clean.replace(/starter\s*player/i, 'StarterPlayer');
+
+  if (clean.includes('.') && !clean.endsWith('.luau') && !clean.endsWith('.lua')) {
+    clean = clean.replace(/\./g, '/');
+  }
+
+  const parts = clean.split('/');
+  const root = parts[0].toLowerCase();
+  if (root === 'workspace') parts[0] = 'Workspace';
+  else if (root === 'replicatedstorage') parts[0] = 'ReplicatedStorage';
+  else if (root === 'serverscriptservice') parts[0] = 'ServerScriptService';
+  else if (root === 'serverstorage') parts[0] = 'ServerStorage';
+  else if (root === 'startergui') parts[0] = 'StarterGui';
+  else if (root === 'starterplayer') parts[0] = 'StarterPlayer';
+
+  return parts.join('/');
+}
+
+/**
  * Robust Intent Classifier based on the Squeeze Engineer Directive
- * Guarantees that "What does this code do?" NEVER triggers code generation or new system creation.
+ * Distinguishes INSTANCE_OPERATION, SCRIPT_CREATE, FEATURE_BUILD, DEBUG, EXPLAIN, etc.
  */
 export function classifyUserIntent(prompt: string, contextFiles?: ProjectFileInfo[]): DetectedIntentResult {
   const p = prompt.toLowerCase().trim();
 
-  // 1. Detect if the prompt contains a raw code block or Lua/Luau script keywords
   const hasCodeBlock = /```(?:lua|luau)?[\s\S]*?```/i.test(prompt);
   const hasCodeSyntax = /(?:local\s+[a-zA-Z0-9_]+\s*=|game:GetService|Players\.PlayerAdded|RunService\.Heartbeat|function\s*\()/i.test(prompt);
   const hasCodeInPrompt = hasCodeBlock || hasCodeSyntax;
 
-  // 2. Greetings
+  // 1. Greetings
   if (/^(hi|hey|hello|yo|sup|greetings|howdy|what's up|whats up|good morning|good evening|good afternoon|who are you|what can you do|help me|what are you)(\s|!|\.|\?|$)/i.test(p)) {
     return {
       intent: 'GREETING',
@@ -51,11 +112,24 @@ export function classifyUserIntent(prompt: string, contextFiles?: ProjectFileInf
     };
   }
 
+  // 2. Studio Sync / Connection Status
+  if (/^(sync to studio|push to studio|check studio|studio status|get explorer|connect studio|websync status)/i.test(p) || p === 'sync') {
+    return {
+      intent: 'STUDIO_SYNC',
+      confidence: 0.98,
+      reason: 'User requested Studio synchronization or status check.',
+      hasCodeInPrompt: false,
+      requiresCodeGeneration: false,
+      mode: 'SYNC_MODE',
+      skillsRequired: ['Roblox Core']
+    };
+  }
+
   // 3. Project-wide Read / Audit Requests
   if (/^(read my project|analyze my project|analyze codebase|audit my code|inspect project|review my code|what does my game do|summarize my game|project overview|game structure|audit project|what systems does my game have)/i.test(p) ||
       p.includes('read my project') || p.includes('analyze my project') || p.includes('audit my codebase')) {
     return {
-      intent: 'READ_PROJECT',
+      intent: 'PROJECT_QUERY',
       confidence: 0.95,
       reason: 'User requested a comprehensive codebase & architecture inspection.',
       hasCodeInPrompt,
@@ -65,20 +139,7 @@ export function classifyUserIntent(prompt: string, contextFiles?: ProjectFileInf
     };
   }
 
-  // 4. Search within Project
-  if (/^(find where|where is|locate|which file handles|search for|find the script that)/i.test(p)) {
-    return {
-      intent: 'SEARCH_PROJECT',
-      confidence: 0.9,
-      reason: 'User is searching for specific logic or files in the project.',
-      hasCodeInPrompt,
-      requiresCodeGeneration: false,
-      mode: 'ANALYSIS_MODE',
-      skillsRequired: ['Architecture', 'Roblox Core']
-    };
-  }
-
-  // 5. EXPLAIN / WHAT DOES THIS CODE DO (CRITICAL PRIORITY OVER CODE PRESENCE)
+  // 4. EXPLAIN / WHAT DOES THIS CODE DO (CRITICAL PRIORITY OVER CODE PRESENCE)
   const isExplainQuery = /^(what does this (code|script|system|function) do|what is this (code|script|system)|explain this (code|script|function|system|part)|explain it|how does this (code|script|system|function|math) work|walk me through this|what is happening here|what is the purpose of this (code|script)|analyze this (code|script)|why does this work|can you explain this|can you break down this)/i.test(p) ||
     /what does this code do/i.test(p) ||
     /what does this script do/i.test(p) ||
@@ -100,93 +161,209 @@ export function classifyUserIntent(prompt: string, contextFiles?: ProjectFileInf
     };
   }
 
-  // 6. REVIEW (Code Quality / Production Readiness)
-  if (/^(is this (code|script|system) (good|production ready|safe|performant|clean|optimal)|review this (code|script|system)|rate this (code|script)|audit this (code|script)|check this (code|script) for issues)/i.test(p) ||
-      p.includes('is this code good') || p.includes('is this production ready') || p.includes('review this script')) {
-    return {
-      intent: 'REVIEW',
-      confidence: 0.95,
-      reason: 'User requested a qualitative architecture and security code review.',
-      hasCodeInPrompt,
-      requiresCodeGeneration: false,
-      mode: 'REVIEW_MODE',
-      skillsRequired: ['Security & Anti-Exploit', 'Optimization', 'Architecture', 'Roblox Core']
-    };
-  }
+  // 5. DEBUG / ERROR DIAGNOSIS
+  const isDebugQuery = /^(there is a bug|there's a bug|why am i getting this error|why does this (error|fail|crash|break)|why is this error happening|what is causing this (error|bug|issue)|why isn't this working|why is this nil|debug this|diagnose this)/i.test(p) ||
+    p.includes('there is a bug') || p.includes('there\'s a bug') || p.includes('why am i getting this error') || p.includes('attempt to index nil');
 
-  // 7. DEBUG / ERROR DIAGNOSIS
-  const isDebugQuery = /^(why am i getting this error|why does this (error|fail|crash|break)|why is this error happening|what is causing this (error|bug|issue)|why isn't this working|why is this nil|debug this|diagnose this)/i.test(p) ||
-    p.includes('why am i getting this error') ||
-    p.includes('why is this not working') ||
-    p.includes('attempt to index nil');
-
-  if (isDebugQuery && !/^(fix|repair|resolve|correct)\b/i.test(p)) {
+  if (isDebugQuery) {
     return {
       intent: 'DEBUG',
-      confidence: 0.92,
-      reason: 'User asked for root-cause diagnosis of an error or bug.',
+      confidence: 0.95,
+      reason: 'User asked for diagnosis or fix of a bug or error.',
       hasCodeInPrompt,
-      requiresCodeGeneration: false,
+      requiresCodeGeneration: true,
       mode: 'DEBUG_MODE',
       skillsRequired: ['Debugging', 'Roblox Core']
     };
   }
 
-  // 8. FIX (Targeted bug resolution)
-  if (/^(fix this (code|script|error|bug|issue|nil)|fix it|repair this|resolve this error|make this error go away)/i.test(p) ||
-      (p.startsWith('fix ') && (hasCodeInPrompt || p.includes('error') || p.includes('bug')))) {
+  // 6. INSTANCE OPERATIONS (Parts, Folders, RemoteEvents, RemoteFunctions, Models, UI, Properties)
+  // Check for explicit script creation first
+  const isScriptTypeRequest = /(?:script|localscript|modulescript)\s+(?:named|called|with name)?\s*([a-zA-Z0-9_\-\.]+)/i.test(p);
+  
+  const instanceClassNames = [
+    'part', 'folder', 'remoteevent', 'remotefunction', 'model', 'screengui', 
+    'frame', 'textlabel', 'textbutton', 'imagebutton', 'decal', 'surfacegui', 
+    'attachment', 'sound', 'meshpart', 'intvalue', 'stringvalue', 'boolvalue', 'objectvalue'
+  ];
+
+  const containsInstanceClass = instanceClassNames.some(cls => p.includes(cls));
+
+  if (!isScriptTypeRequest && containsInstanceClass) {
+    // 6a. Create Instance
+    const createMatch = p.match(/(?:create|make|add|spawn|generate|build)\s+(?:a|an)?\s*([a-zA-Z0-9_]+)\s+(?:named|called|with name)?\s*([a-zA-Z0-9_\-\.]+)(?:\s+(?:in|inside|under|at|on)?\s*([a-zA-Z0-9_\-\.\s\/]+))?/i);
+    if (createMatch) {
+      const rawClass = createMatch[1];
+      const name = createMatch[2];
+      const rawParent = createMatch[3] || 'Workspace';
+
+      let className = 'Part';
+      const lowerClass = rawClass.toLowerCase();
+      if (lowerClass.includes('folder')) className = 'Folder';
+      else if (lowerClass.includes('remoteevent')) className = 'RemoteEvent';
+      else if (lowerClass.includes('remotefunction')) className = 'RemoteFunction';
+      else if (lowerClass.includes('model')) className = 'Model';
+      else if (lowerClass.includes('screengui')) className = 'ScreenGui';
+      else if (lowerClass.includes('frame')) className = 'Frame';
+      else if (lowerClass.includes('part')) className = 'Part';
+      else if (lowerClass.includes('attachment')) className = 'Attachment';
+      else if (lowerClass.includes('sound')) className = 'Sound';
+
+      const parentPath = normalizeRobloxPath(rawParent);
+
+      return {
+        intent: 'INSTANCE_OPERATION',
+        confidence: 0.98,
+        reason: `User requested direct Instance creation: ${className} named '${name}' in '${parentPath}'`,
+        hasCodeInPrompt: false,
+        requiresCodeGeneration: false,
+        mode: 'INSTANCE_MODE',
+        targetPathNormalized: `${parentPath}/${name}`,
+        structuredInstanceIntent: {
+          operation: 'createInstance',
+          className,
+          name,
+          parentPath,
+          properties: className === 'Part' ? { Anchored: true } : {}
+        },
+        skillsRequired: ['Roblox Core']
+      };
+    }
+
+    // 6b. Delete / Remove Instance
+    const deleteMatch = p.match(/(?:delete|remove|destroy)\s+(?:the|a|an)?\s*([a-zA-Z0-9_]+)?\s*(?:named|called)?\s*([a-zA-Z0-9_\-\.\/]+)/i);
+    if (deleteMatch) {
+      const targetName = deleteMatch[2] || deleteMatch[1];
+      const targetPath = normalizeRobloxPath(targetName);
+      return {
+        intent: 'INSTANCE_OPERATION',
+        confidence: 0.95,
+        reason: `User requested deletion of Instance '${targetPath}'`,
+        hasCodeInPrompt: false,
+        requiresCodeGeneration: false,
+        mode: 'INSTANCE_MODE',
+        targetPathNormalized: targetPath,
+        structuredInstanceIntent: {
+          operation: 'deleteInstance',
+          name: targetName,
+          parentPath: targetPath
+        },
+        skillsRequired: ['Roblox Core']
+      };
+    }
+
+    // 6c. Rename Instance
+    const renameMatch = p.match(/(?:rename)\s+(?:the|a|an)?\s*([a-zA-Z0-9_]+)?\s*([a-zA-Z0-9_\-\.\/]+)\s+to\s+([a-zA-Z0-9_\-\.]+)/i);
+    if (renameMatch) {
+      const oldName = renameMatch[2];
+      const newName = renameMatch[3];
+      return {
+        intent: 'INSTANCE_OPERATION',
+        confidence: 0.95,
+        reason: `User requested rename of Instance '${oldName}' to '${newName}'`,
+        hasCodeInPrompt: false,
+        requiresCodeGeneration: false,
+        mode: 'INSTANCE_MODE',
+        structuredInstanceIntent: {
+          operation: 'renameInstance',
+          name: oldName,
+          newName
+        },
+        skillsRequired: ['Roblox Core']
+      };
+    }
+
+    // 6d. Move Instance
+    const moveMatch = p.match(/(?:move)\s+(?:the|a|an)?\s*([a-zA-Z0-9_]+)?\s*([a-zA-Z0-9_\-\.]+)\s+to\s+([a-zA-Z0-9_\-\.\s\/]+)/i);
+    if (moveMatch) {
+      const targetName = moveMatch[2];
+      const newParentPath = normalizeRobloxPath(moveMatch[3]);
+      return {
+        intent: 'INSTANCE_OPERATION',
+        confidence: 0.95,
+        reason: `User requested moving Instance '${targetName}' to '${newParentPath}'`,
+        hasCodeInPrompt: false,
+        requiresCodeGeneration: false,
+        mode: 'INSTANCE_MODE',
+        structuredInstanceIntent: {
+          operation: 'moveInstance',
+          name: targetName,
+          newParentPath
+        },
+        skillsRequired: ['Roblox Core']
+      };
+    }
+
+    // 6e. Set Property (Anchor, Color, Size, etc.)
+    if (p.includes('anchor') || p.includes('unanchor') || p.includes('make part') || p.includes('set property') || p.includes('color')) {
+      const isAnchored = p.includes('anchor') && !p.includes('unanchor');
+      const targetNameMatch = p.match(/(?:anchor|unanchor|make|set)\s+(?:part|instance|folder)?\s*([a-zA-Z0-9_\-\.]+)/i);
+      const targetName = targetNameMatch ? targetNameMatch[1] : '1';
+      return {
+        intent: 'INSTANCE_OPERATION',
+        confidence: 0.92,
+        reason: `User requested property change on Instance '${targetName}'`,
+        hasCodeInPrompt: false,
+        requiresCodeGeneration: false,
+        mode: 'INSTANCE_MODE',
+        structuredInstanceIntent: {
+          operation: 'setProperty',
+          name: targetName,
+          parentPath: 'Workspace',
+          propertyName: 'Anchored',
+          propertyValue: isAnchored
+        },
+        skillsRequired: ['Roblox Core']
+      };
+    }
+  }
+
+  // 7. SCRIPT CREATE (Explicit Script, LocalScript, ModuleScript creation)
+  const scriptMatch = p.match(/(?:create|make|add|write)\s+(?:a|an)?\s*(script|localscript|modulescript)\s+(?:named|called|with name)?\s*([a-zA-Z0-9_\-\.]+)(?:\s+(?:in|inside|under|at|on)?\s*([a-zA-Z0-9_\-\.\s\/]+))?/i);
+  if (scriptMatch) {
+    const rawType = scriptMatch[1].toLowerCase();
+    const name = scriptMatch[2];
+    const rawParent = scriptMatch[3] || (rawType === 'localscript' ? 'StarterPlayer.StarterPlayerScripts' : rawType === 'modulescript' ? 'ReplicatedStorage' : 'ServerScriptService');
+
+    let className: 'Script' | 'LocalScript' | 'ModuleScript' = 'Script';
+    if (rawType.includes('local')) className = 'LocalScript';
+    else if (rawType.includes('module')) className = 'ModuleScript';
+
+    const parentPath = normalizeRobloxPath(rawParent);
+
     return {
-      intent: 'FIX',
+      intent: 'SCRIPT_CREATE',
+      confidence: 0.96,
+      reason: `User requested explicit script creation: ${className} named '${name}' in '${parentPath}'`,
+      hasCodeInPrompt,
+      requiresCodeGeneration: true,
+      mode: 'SCRIPT_MODE',
+      targetPathNormalized: `${parentPath}/${name}`,
+      structuredScriptIntent: {
+        operation: 'createScript',
+        className,
+        name,
+        parentPath
+      },
+      skillsRequired: ['Roblox Core', 'Architecture']
+    };
+  }
+
+  // 8. FEATURE BUILD (Multi-file / Multi-component gameplay system request)
+  const isBuildFeature = /(^(make|create|write|build|code|implement|generate|develop|add a system|add a mechanic|set up)\b)|(build (a|an|the)|create (a|an|the)|make (a|an|the))/i.test(p);
+  if (isBuildFeature) {
+    return {
+      intent: 'FEATURE_BUILD',
       confidence: 0.95,
-      reason: 'User requested a direct fix for a broken script or error.',
+      reason: 'User explicitly requested building a complete game feature or mechanics system.',
       hasCodeInPrompt,
       requiresCodeGeneration: true,
-      mode: 'DEBUG_MODE',
-      skillsRequired: ['Debugging', 'Roblox Core', 'Security & Anti-Exploit']
-    };
-  }
-
-  // 9. OPTIMIZE
-  if (/^(optimize this|make this faster|reduce lag|improve performance of this|reduce memory usage)/i.test(p)) {
-    return {
-      intent: 'OPTIMIZE',
-      confidence: 0.9,
-      reason: 'User requested performance and memory optimization.',
-      hasCodeInPrompt,
-      requiresCodeGeneration: true,
-      mode: 'BUILD_MODE',
-      skillsRequired: ['Optimization', 'Roblox Core']
-    };
-  }
-
-  // 10. REFACTOR / MODIFY
-  if (/^(refactor this|improve this (system|script)|modify this to|change the speed|add permissions to this|change this so that|update this)/i.test(p)) {
-    return {
-      intent: 'MODIFY',
-      confidence: 0.9,
-      reason: 'User requested modification to an existing script or system.',
-      hasCodeInPrompt,
-      requiresCodeGeneration: true,
-      mode: 'BUILD_MODE',
-      skillsRequired: ['Architecture', 'Roblox Core']
-    };
-  }
-
-  // 11. BUILD / CREATE (Explicit feature creation)
-  const isBuildImperative = /(^(make|create|write|build|code|implement|generate|develop|add a system|add a mechanic|set up)\b)|(build (a|an|the)|create (a|an|the)|make (a|an|the))/i.test(p);
-  if (isBuildImperative) {
-    return {
-      intent: 'BUILD',
-      confidence: 0.95,
-      reason: 'User explicitly requested building or implementing a new feature or system.',
-      hasCodeInPrompt,
-      requiresCodeGeneration: true,
-      mode: 'BUILD_MODE',
+      mode: 'FEATURE_MODE',
       skillsRequired: ['Architecture', 'Gameplay', 'Data & Persistence', 'Security & Anti-Exploit']
     };
   }
 
-  // 12. General Informational Question (Conceptual / Roblox Engine API)
+  // 9. General Question or Explanation
   const isQuestion = /^(what is|what are|how do|how does|why is|why does|explain|can you explain|tell me about|difference between|when should i use|is it better to)\b/i.test(p);
   if (isQuestion) {
     return {
@@ -200,24 +377,12 @@ export function classifyUserIntent(prompt: string, contextFiles?: ProjectFileInf
     };
   }
 
-  // Default: If code is provided with no other imperative, default to EXPLAIN
-  if (hasCodeInPrompt) {
-    return {
-      intent: 'EXPLAIN',
-      confidence: 0.8,
-      reason: 'Code was provided without explicit build imperative; defaulting to safe EXPLAIN mode.',
-      hasCodeInPrompt: true,
-      requiresCodeGeneration: false,
-      mode: 'EXPLAIN_MODE',
-      skillsRequired: ['Roblox Core', 'Architecture']
-    };
-  }
-
+  // Default: Safe EXPLAIN mode if ambiguous
   return {
     intent: 'EXPLAIN',
     confidence: 0.7,
-    reason: 'General inquiry; maintaining minimal intervention.',
-    hasCodeInPrompt: false,
+    reason: 'General inquiry; maintaining safe explanation mode.',
+    hasCodeInPrompt,
     requiresCodeGeneration: false,
     mode: 'EXPLAIN_MODE',
     skillsRequired: ['Roblox Core']

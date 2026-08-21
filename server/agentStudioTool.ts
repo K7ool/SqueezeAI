@@ -8,6 +8,8 @@ export interface AgentStudioExecutionResult {
   details?: string;
   filesSynced?: number;
   conflictsDetected?: number;
+  operationId?: string;
+  data?: any;
 }
 
 /**
@@ -16,11 +18,9 @@ export interface AgentStudioExecutionResult {
  */
 export async function executeStudioPublish(projectId: string, files: { path: string; name?: string; className?: string; source: string }[]): Promise<AgentStudioExecutionResult> {
   try {
-    // 1. Check Studio Connection status
     const session = studioWebSync.getSession(projectId);
     
     if (!session || session.status === 'disconnected' || session.status === 'offline') {
-      // Try auto reconnect or session restore
       const allSessions = db.getAllStudioSessions();
       const activeSession = allSessions.find(s => s.projectId === projectId && s.status === 'connected');
       
@@ -52,7 +52,6 @@ export async function executeStudioPublish(projectId: string, files: { path: str
     for (const file of files) {
       const scriptType = file.className || (file.path.includes('.server.') ? 'Script' : file.path.includes('.client.') ? 'LocalScript' : 'ModuleScript');
       
-      // Save file change and queue change event for Roblox Studio WebSync
       const res = studioWebSync.saveFileChange(actualProjectId, {
         path: file.path,
         className: scriptType as any,
@@ -75,7 +74,6 @@ export async function executeStudioPublish(projectId: string, files: { path: str
       };
     }
 
-    // Record audit log
     db.addStudioAuditLog(actualProjectId, {
       sessionId: currentSession?.sessionId,
       type: 'AI_PUBLISH',
@@ -119,7 +117,6 @@ export async function executeStudioOperation(projectId: string, operation: any):
     const res = studioWebSync.enqueueStudioOperation(projectId, operation, session?.sessionId);
 
     if (res.success) {
-      // Record audit log
       db.addStudioAuditLog(projectId, {
         sessionId: session?.sessionId,
         type: 'AI_PUBLISH',
@@ -128,13 +125,12 @@ export async function executeStudioOperation(projectId: string, operation: any):
         metadata: { operationId: res.operationId }
       });
 
-      // Verification loop
       let finalStatus: AgentStudioExecutionResult["status"] = 'QUEUED';
       let summary = `Successfully enqueued operation ${operation.operation}.`;
       for (let i = 0; i < 6; i++) {
-        await new Promise(r => setTimeout(r, 500));
+        await new Promise(r => setTimeout(r, 300));
         const status = studioWebSync.getOperationStatus(projectId, res.operationId);
-        if (status === 'applied') {
+        if (status === 'applied' || status === 'acknowledged') {
           finalStatus = 'VERIFIED';
           summary = `Operation ${operation.operation} was successfully verified by Studio.`;
           break;
@@ -148,7 +144,8 @@ export async function executeStudioOperation(projectId: string, operation: any):
       return {
         success: finalStatus === 'VERIFIED' || finalStatus === 'QUEUED',
         status: finalStatus,
-        summary
+        summary,
+        operationId: res.operationId
       };
     } else {
       return {
@@ -167,3 +164,152 @@ export async function executeStudioOperation(projectId: string, operation: any):
     };
   }
 }
+
+/**
+ * REAL STUDIO TOOL LAYER (studio.*)
+ * Dedicated, callable Studio Tools matching the Studio Tool Layer Specification
+ */
+export const studio = {
+  getStatus: async (projectId: string) => {
+    const session = studioWebSync.getSession(projectId);
+    const isOnline = session ? (session.status === 'connected' && Date.now() - session.lastHeartbeat < 45000) : false;
+    return {
+      success: true,
+      status: isOnline ? 'CONNECTED' : 'DISCONNECTED',
+      session,
+      placeName: session?.placeName || 'Roblox Place',
+      placeId: session?.placeId
+    };
+  },
+
+  getProject: async (projectId: string) => {
+    const syncState = studioWebSync.getProjectSyncState(projectId);
+    return {
+      success: true,
+      projectId,
+      filesCount: syncState.filesCount,
+      files: syncState.files,
+      session: syncState.session
+    };
+  },
+
+  getExplorer: async (projectId: string) => {
+    const tree = studioWebSync.getMemoryTree(projectId);
+    return {
+      success: true,
+      tree
+    };
+  },
+
+  search: async (projectId: string, query: string) => {
+    const files = db.getStudioFiles(projectId);
+    const matched = files.filter(f => f.path.toLowerCase().includes(query.toLowerCase()) || f.name.toLowerCase().includes(query.toLowerCase()));
+    return {
+      success: true,
+      matched
+    };
+  },
+
+  createInstance: async (projectId: string, params: { className: string; name: string; parentPath?: string; properties?: any }) => {
+    return await executeStudioOperation(projectId, {
+      operation: 'createInstance',
+      className: params.className,
+      name: params.name,
+      parentPath: params.parentPath || 'Workspace',
+      properties: params.properties || {}
+    });
+  },
+
+  updateInstance: async (projectId: string, params: { path: string; properties?: any; attributes?: any }) => {
+    return await executeStudioOperation(projectId, {
+      operation: 'updateInstance',
+      path: params.path,
+      properties: params.properties,
+      attributes: params.attributes
+    });
+  },
+
+  deleteInstance: async (projectId: string, path: string) => {
+    return await executeStudioOperation(projectId, {
+      operation: 'deleteInstance',
+      path
+    });
+  },
+
+  renameInstance: async (projectId: string, params: { path: string; newName: string }) => {
+    return await executeStudioOperation(projectId, {
+      operation: 'renameInstance',
+      path: params.path,
+      newName: params.newName
+    });
+  },
+
+  moveInstance: async (projectId: string, params: { path: string; newParentPath: string }) => {
+    return await executeStudioOperation(projectId, {
+      operation: 'moveInstance',
+      path: params.path,
+      newParentPath: params.newParentPath
+    });
+  },
+
+  setProperty: async (projectId: string, params: { path: string; propertyName: string; propertyValue: any }) => {
+    return await executeStudioOperation(projectId, {
+      operation: 'setProperty',
+      path: params.path,
+      propertyName: params.propertyName,
+      propertyValue: params.propertyValue
+    });
+  },
+
+  setAttribute: async (projectId: string, params: { path: string; attributeName: string; attributeValue: any }) => {
+    return await executeStudioOperation(projectId, {
+      operation: 'setAttribute',
+      path: params.path,
+      attributeName: params.attributeName,
+      attributeValue: params.attributeValue
+    });
+  },
+
+  readScript: async (projectId: string, path: string) => {
+    const file = studioWebSync.getFile(projectId, path);
+    if (file) {
+      return { success: true, file };
+    }
+    return { success: false, summary: `Script not found at path ${path}` };
+  },
+
+  createScript: async (projectId: string, params: { className: 'Script' | 'LocalScript' | 'ModuleScript'; name: string; parentPath?: string; source?: string }) => {
+    const parent = params.parentPath || (params.className === 'LocalScript' ? 'StarterPlayer.StarterPlayerScripts' : params.className === 'ModuleScript' ? 'ReplicatedStorage' : 'ServerScriptService');
+    const fullPath = `${parent}/${params.name}`;
+    const source = params.source || (params.className === 'ModuleScript' ? `local ${params.name} = {}\n\nreturn ${params.name}` : `--!strict\n-- [Squeeze Luau] ${params.name}\nprint("${params.name} initialized.")`);
+
+    return await executeStudioPublish(projectId, [{
+      path: fullPath,
+      name: params.name,
+      className: params.className,
+      source
+    }]);
+  },
+
+  updateScript: async (projectId: string, params: { path: string; source: string }) => {
+    return await executeStudioPublish(projectId, [{
+      path: params.path,
+      source: params.source
+    }]);
+  },
+
+  deleteScript: async (projectId: string, path: string) => {
+    return await executeStudioOperation(projectId, {
+      operation: 'deleteScript',
+      path
+    });
+  },
+
+  verify: async (projectId: string, operationId: string) => {
+    const status = studioWebSync.getOperationStatus(projectId, operationId);
+    return {
+      success: status === 'applied' || status === 'acknowledged',
+      status
+    };
+  }
+};

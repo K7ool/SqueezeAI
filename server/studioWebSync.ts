@@ -1144,6 +1144,33 @@ class StudioWebSyncManager {
     const op = queue.find((o: any) => o.operationId === operationId);
     return op ? op.status : null;
   }
+
+  public getMemoryTree(projectId: string): StudioProjectTreeItem[] {
+    return this.memoryTrees.get(projectId) || [];
+  }
+
+  public getFile(projectId: string, path: string): SyncFilePayload | null {
+    const projectFilesMap = this.memoryFiles.get(projectId);
+    if (projectFilesMap && projectFilesMap.has(path)) {
+      return projectFilesMap.get(path)!;
+    }
+    const dbFile = db.getStudioFile(projectId, path);
+    if (dbFile) {
+      return {
+        id: dbFile.id,
+        path: dbFile.path,
+        name: dbFile.name,
+        className: dbFile.className as any,
+        parentPath: dbFile.parentPath,
+        source: dbFile.source,
+        version: dbFile.version,
+        hash: dbFile.hash,
+        updatedAt: dbFile.updatedAt,
+        updatedBy: dbFile.updatedBy as any
+      };
+    }
+    return null;
+  }
 }
 
 export const studioWebSync = new StudioWebSyncManager();
