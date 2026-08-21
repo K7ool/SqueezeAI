@@ -10,7 +10,9 @@ let adminClient: SupabaseClient | null = null;
  *                      If false, loads the client using the public anon key.
  */
 export function getSupabaseClient(useServiceRole = true): SupabaseClient {
-  const supabaseUrl = process.env.SUPABASE_URL || 'https://kubltllfolwajfkacsam.supabase.co';
+  let supabaseUrl = process.env.SUPABASE_URL || 'https://kubltllfolwajfkacsam.supabase.co';
+  // Strip trailing slashes to prevent malformed URL paths like "//rest/v1"
+  supabaseUrl = supabaseUrl.replace(/\/+$/, '');
   
   if (useServiceRole) {
     if (adminClient) return adminClient;
