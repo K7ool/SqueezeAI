@@ -191,7 +191,7 @@ export function classifyUserIntent(prompt: string, contextFiles?: ProjectFileInf
 
   if (!isScriptTypeRequest && containsInstanceClass) {
     // 6a. Create Instance
-    const createMatch = p.match(/(?:create|make|add|spawn|generate|build)\s+(?:a|an)?\s*([a-zA-Z0-9_]+)\s+(?:named|called|with name)?\s*([a-zA-Z0-9_\-\.]+)(?:\s+(?:in|inside|under|at|on)?\s*([a-zA-Z0-9_\-\.\s\/]+))?/i);
+    const createMatch = prompt.match(/(?:create|make|add|spawn|generate|build)\s+(?:a|an)?\s*([a-zA-Z0-9_]+)\s+(?:named|called|with name)?\s*([a-zA-Z0-9_\-\.]+)(?:\s+(?:in|inside|under|at|on)?\s*([a-zA-Z0-9_\-\.\s\/]+))?/i);
     if (createMatch) {
       const rawClass = createMatch[1];
       const name = createMatch[2];
