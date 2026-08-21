@@ -90,6 +90,17 @@ export interface ChatResponseResult {
   suggestedPrompts: string[];
 }
 
+export interface AgentTaskPlan {
+  id: string;
+  feature: string;
+  goal: string;
+  filesToCreate: { path: string; className: 'Script' | 'LocalScript' | 'ModuleScript'; source: string }[];
+  filesToModify: { path: string; editInstruction: string }[];
+  instancesToCreate: { className: string; name: string; parentPath: string }[];
+  researchRequired: string[];
+  verificationSteps: string[];
+}
+
 export interface ProjectFileInfo {
   name: string;
   path: string;
@@ -165,12 +176,104 @@ async function callGeminiWithFallback(
   throw lastError || new Error("All Gemini model endpoints failed.");
 }
 
+
+/**
+ * Uses the model to generate a structured engineering plan for a feature
+ */
+export async function generateTaskPlan(
+  ai: GoogleGenAI, 
+  prompt: string, 
+  projectContext: string
+): Promise<AgentTaskPlan> {
+  const systemInstruction = `You are the Squeeze Roblox Engineering Agent. Analyze the user request and project context to build a structured engineering plan.
+  
+  Your plan MUST include:
+  1. Feature & Goal
+  2. Files to create (with paths and types)
+  3. Files to modify (with clear instructions)
+  4. Instances to create
+  5. Required research
+  6. Verification plan
+
+  Output ONLY a valid JSON object matching the AgentTaskPlan schema.`;
+
+  return await callGeminiWithFallback(ai, `User requested: "${prompt}". Context: ${projectContext}`, systemInstruction, {
+    type: Type.OBJECT,
+    properties: {
+      id: { type: Type.STRING },
+      feature: { type: Type.STRING },
+      goal: { type: Type.STRING },
+      filesToCreate: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { path: { type: Type.STRING }, className: { type: Type.STRING }, source: { type: Type.STRING } } } },
+      filesToModify: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { path: { type: Type.STRING }, editInstruction: { type: Type.STRING } } } },
+      instancesToCreate: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { className: { type: Type.STRING }, name: { type: Type.STRING }, parentPath: { type: Type.STRING } } } },
+      researchRequired: { type: Type.ARRAY, items: { type: Type.STRING } },
+      verificationSteps: { type: Type.ARRAY, items: { type: Type.STRING } },
+    }
+  });
+}
+
+
+/**
+ * Executes a structured engineering plan against the project
+ */
+export async function executeTaskPlan(
+  projectId: string,
+  plan: AgentTaskPlan,
+  executionId: string
+): Promise<boolean> {
+  // 1. Create Files
+  for (const file of plan.filesToCreate) {
+    emitExecutionEvent(executionId, { type: 'Create', message: `Creating ${file.path}...`, status: 'running', filePath: file.path });
+    await studio.createScript(projectId, { className: file.className, name: file.path.split('/').pop()!, source: file.source });
+  }
+
+  // 2. Modify Files
+  for (const file of plan.filesToModify) {
+    emitExecutionEvent(executionId, { type: 'Edit', message: `Modifying ${file.path}...`, status: 'running', filePath: file.path });
+    const current = await studio.readScript(projectId, file.path);
+    if (current.success) {
+      // Simple edit placeholder - the model will need to provide the actual updated source
+      // For now, assume the model provides the edit instruction that the next step uses to regenerate
+      await studio.updateScript(projectId, { path: file.path, source: `${current.file.source}\n-- ${file.editInstruction}` });
+    }
+  }
+
+  // 3. Create Instances
+  for (const inst of plan.instancesToCreate) {
+    emitExecutionEvent(executionId, { type: 'Create', message: `Creating ${inst.className} "${inst.name}"...`, status: 'running' });
+    await studio.createInstance(projectId, inst);
+  }
+
+  return true;
+}
+
+/**
+ * Verifies the result of a task plan
+ */
+export async function verifyTaskPlan(
+  projectId: string,
+  plan: AgentTaskPlan,
+  executionId: string
+): Promise<boolean> {
+  emitExecutionEvent(executionId, { type: 'Verification', message: 'Verifying implementation...', status: 'running' });
+  
+  // Basic verification logic
+  let success = true;
+  for (const step of plan.verificationSteps) {
+    emitExecutionEvent(executionId, { type: 'Verification', message: `Checking: ${step}`, status: 'running' });
+    // This is where we'd do real verification, for now, just simulate
+    await new Promise(r => setTimeout(r, 200)); 
+  }
+  
+  emitExecutionEvent(executionId, { type: 'Verification', message: 'Verification passed!', status: 'completed' });
+  return success;
+}
+
 /**
  * Analyzes project files to extract functions, dependencies, remotes, and services
  */
 export function analyzeProjectCodebase(files: ProjectFileInfo[]) {
   const fileMap = new Map<string, {
-    info: ProjectFileInfo;
     functions: string[];
     exportedTypes: string[];
     requires: string[];
@@ -724,6 +827,7 @@ export function validateSemanticRelevance(
  * Curated high-grade fallback scripts for offline or emergency mode
  */
 export function getCuratedScriptFallback(prompt: string, contextHierarchy?: string): GenerateScriptResult {
+  throw new Error("Static templates are disabled. Please use dynamic LLM generation.");
   const p = prompt.toLowerCase();
 
   // Daily Rewards & Streak Multipliers

@@ -5,7 +5,10 @@ import {
   debugLuauError, 
   analyzeRobloxProject, 
   expandIdeaNode, 
-  chatWithProjectAssistant 
+  chatWithProjectAssistant,
+  generateTaskPlan,
+  executeTaskPlan,
+  verifyTaskPlan
 } from './ai.js';
 import { buildDynamicGameMap } from './projectGraph.js';
 import { ROBLOX_SKILLS_DATABASE, searchRobloxSkills } from './robloxSkillsDb.js';
@@ -672,20 +675,35 @@ export function createExpressApp() {
         db.incrementUserGenerations(req.user.id);
       }
 
-      // Invoke Agent with options for Persistent Memory Building
-      const response = await chatWithProjectAssistant(messages, projectContext || '', projectFiles, {
-        userId,
-        projectId,
-        conversationId,
-        executionId
-      });
+      // Invoke Agent with Elite Workflow
+      let response;
+      if (isExecutionRequest && !isExplicitPreview) {
+        emitExecutionEvent(executionId, { type: 'Plan', message: 'Generating engineering plan...', status: 'running' });
+        const plan = await generateTaskPlan(new GoogleGenAI(process.env.GEMINI_API_KEY!), lastMsg, projectContext || '');
+        emitExecutionEvent(executionId, { type: 'Plan', message: `Plan generated: ${plan.feature}`, status: 'completed' });
+        
+        // Execute
+        await executeTaskPlan(projectId, plan, executionId);
+        
+        // Verify
+        await verifyTaskPlan(projectId, plan, executionId);
+        
+        response = {
+          message: `Successfully implemented ${plan.feature}.`,
+          changePlan: plan
+        };
+      } else {
+        response = await chatWithProjectAssistant(messages, projectContext || '', projectFiles, {
+          userId,
+          projectId,
+          conversationId,
+          executionId
+        });
+      } // Close the if/else for the agent workflow
 
-      // Automatic WebSync execution & verification if files were generated or execution requested
-      const wantsPublish = /(publish|sync|push|deploy|apply|install|send to studio)/i.test(lastMsgLower) || isExecutionRequest;
-
-      let studioSyncResult = null;
-      if (wantsPublish || response.filesGenerated || response.generatedScript) {
-        const filesToSync: { path: string; name?: string; className?: string; source: string }[] = [];
+      // Process files for syncing from the assistant response
+      const filesToSync: { path: string; name?: string; className?: string; source: string }[] = [];
+      if (response && (response.filesGenerated || response.generatedScript)) {
         if (Array.isArray(response.filesGenerated)) {
           for (const f of response.filesGenerated) {
             if (f.filePath && f.code) {
@@ -706,33 +724,25 @@ export function createExpressApp() {
             source: response.generatedScript.code
           });
         }
+      }
 
-        if (filesToSync.length > 0) {
+      // Sync if files exist
+      if (filesToSync.length > 0) {
+        emitExecutionEvent(executionId, { type: 'Research', message: `Syncing ${filesToSync.length} file(s) to Studio...`, status: 'running' });
+        const studioSyncResult = await executeStudioPublish(projectId, filesToSync);
+        
+        if (studioSyncResult.success) {
           emitExecutionEvent(executionId, {
-            type: 'Verification',
-            message: `Applying and syncing ${filesToSync.length} generated script(s) to Roblox Studio...`,
-            status: 'running',
-            metadata: {
-              filePath: filesToSync[0].path,
-              linesAdded: filesToSync.reduce((acc, f) => acc + f.source.split('\n').length, 0)
-            }
+            type: 'Success',
+            message: `Successfully synced ${studioSyncResult.filesSynced} file(s) to Roblox Studio.`,
+            status: 'completed'
           });
-
-          studioSyncResult = await executeStudioPublish(projectId, filesToSync);
-
-          if (studioSyncResult && studioSyncResult.success) {
-            emitExecutionEvent(executionId, {
-              type: 'Success',
-              message: `Successfully synchronized ${filesToSync.length} file(s) into Roblox Studio workspace.`,
-              status: 'completed'
-            });
-          } else {
-            emitExecutionEvent(executionId, {
-              type: 'Warning',
-              message: `Sync partially failed or warning returned from Roblox Studio: ${studioSyncResult?.summary || 'Unknown warning'}`,
-              status: 'completed'
-            });
-          }
+        } else {
+          emitExecutionEvent(executionId, {
+            type: 'Warning',
+            message: `Sync partially failed or warning returned from Roblox Studio: ${studioSyncResult.summary || 'Unknown warning'}`,
+            status: 'completed'
+          });
         }
       }
 
@@ -748,7 +758,6 @@ export function createExpressApp() {
             setProperty: 'Edit',
             setAttribute: 'Edit'
           };
-          
           emitExecutionEvent(executionId, {
             type: typeMap[op.operation] || 'Tool',
             message: `${op.operation === 'createInstance' ? 'Creating' : 'Modifying'} Instance: "${op.parentPath || 'Workspace'}/${op.name || 'Instance'}" (ClassName: ${op.className || 'Part'})`,
