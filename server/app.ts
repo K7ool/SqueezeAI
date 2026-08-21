@@ -305,12 +305,39 @@ export function createExpressApp() {
     }
   });
 
-  // AI Chat with Project Assistant
+  // AI Chat with Project Assistant (Studio-First Execution Engine)
   app.post('/api/chat', optionalAuthMiddleware, async (req: AuthenticatedRequest, res) => {
     try {
       const { messages, projectContext, projectFiles } = req.body;
       if (!messages || !Array.isArray(messages) || messages.length === 0) {
         return res.status(400).json({ error: 'Messages array is required.' });
+      }
+
+      const lastMsg = messages[messages.length - 1]?.content || '';
+      const lastMsgLower = lastMsg.toLowerCase();
+
+      const isExplanationQuery = /^(what does|explain|how does|tell me about|what is|how do|show an example of)/i.test(lastMsgLower);
+      const isExplicitPreview = /^(show me the code before applying|preview code only)/i.test(lastMsgLower);
+      const isExecutionRequest = /(create|build|make|add|implement|modify|edit|fix|delete|remove|rename|move|sync|publish|install|apply|command|part|system|script|folder|model|remotetevent)/i.test(lastMsgLower) && !isExplanationQuery;
+
+      const projectId = 'prj_default_roblox';
+
+      if (isExecutionRequest && !isExplicitPreview) {
+        // 1. Studio-First: Check connection status BEFORE any action or code generation
+        const syncState = studioWebSync.getProjectSyncState(projectId);
+        const isConnected = syncState.session && syncState.session.isOnline && syncState.session.status === 'connected';
+
+        if (!isConnected) {
+          return res.json({
+            success: false,
+            error: {
+              code: 'STUDIO_OFFLINE',
+              message: '❌ STUDIO_OFFLINE\nNo active Squeeze WebSync plugin session was detected.\n\nRequired:\n• Open Roblox Studio\n• Enable the Squeeze WebSync plugin\n• Connect the current project\n\nNo changes were made.'
+            },
+            studioConnectionStatus: 'DISCONNECTED',
+            summary: 'Studio is offline. No changes were made.'
+          });
+        }
       }
 
       const user = req.user;
@@ -320,9 +347,8 @@ export function createExpressApp() {
 
       const response = await chatWithProjectAssistant(messages, projectContext || '', projectFiles);
 
-      // Automatic WebSync execution & verification if files were generated or publish/sync requested
-      const lastMsgLower = messages[messages.length - 1]?.content?.toLowerCase() || '';
-      const wantsPublish = /(publish|sync|push|deploy|apply|install|send to studio)/i.test(lastMsgLower);
+      // Automatic WebSync execution & verification if files were generated or execution requested
+      const wantsPublish = /(publish|sync|push|deploy|apply|install|send to studio)/i.test(lastMsgLower) || isExecutionRequest;
 
       let studioSyncResult = null;
       if (wantsPublish || response.filesGenerated || response.generatedScript) {
@@ -349,7 +375,7 @@ export function createExpressApp() {
         }
 
         if (filesToSync.length > 0) {
-          studioSyncResult = await executeStudioPublish('prj_default_roblox', filesToSync);
+          studioSyncResult = await executeStudioPublish(projectId, filesToSync);
         }
       }
 
