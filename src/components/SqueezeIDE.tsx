@@ -41,7 +41,7 @@ export const SqueezeIDE: React.FC<SqueezeIDEProps> = ({
       if (state) setSyncState(state);
     };
     fetchStatus();
-    const interval = setInterval(fetchStatus, 3000);
+    const interval = setInterval(fetchStatus, 10000);
     return () => clearInterval(interval);
   }, [project.id, isPolling]);
 

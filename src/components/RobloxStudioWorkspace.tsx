@@ -73,7 +73,7 @@ export const RobloxStudioWorkspace: React.FC<RobloxStudioWorkspaceProps> = ({
     }
 
     checkStatus();
-    const interval = setInterval(checkStatus, 3000);
+    const interval = setInterval(checkStatus, 10000);
 
     getStudioPluginSource().then(src => {
       if (isMounted && src) setPluginSource(src);

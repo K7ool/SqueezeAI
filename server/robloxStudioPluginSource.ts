@@ -23,8 +23,8 @@ end)
 
 -- Configuration
 local DEFAULT_BACKEND_URL = "http://localhost:3000/api/studio"
-local POLL_INTERVAL_SECONDS = 1.0
-local HEARTBEAT_INTERVAL_SECONDS = 3.0
+local POLL_INTERVAL_SECONDS = 3.0
+local HEARTBEAT_INTERVAL_SECONDS = 10.0
 local MAX_RETRY_ATTEMPTS = 5
 
 -- Plugin State
