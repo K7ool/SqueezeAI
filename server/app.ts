@@ -150,6 +150,26 @@ export function createExpressApp() {
     });
   });
 
+  // User Quota Endpoint
+  app.get('/api/user/quota', optionalAuthMiddleware, (req: AuthenticatedRequest, res) => {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const isUnlimited = req.user.plan === 'pro' || req.user.plan === 'studio';
+    const remaining = isUnlimited ? 9999 : Math.max(0, req.user.monthlyLimit - req.user.usedGenerations);
+
+    res.json({
+      success: true,
+      quota: {
+        used: req.user.usedGenerations,
+        limit: req.user.monthlyLimit,
+        remaining,
+        isUnlimited,
+        planName: PLANS[req.user.plan]?.name || 'Sip',
+      }
+    });
+  });
+
   // Forgot Password
   app.post('/api/auth/forgot-password', (req, res) => {
     const { email } = req.body;

@@ -2,8 +2,12 @@ import path from 'path';
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import { createExpressApp } from './server/app.js';
+import { initializeSupabaseCache } from './server/db.js';
 
 async function startServer() {
+  // Initialize and hydrate our server-side memory cache with Supabase persistent data
+  await initializeSupabaseCache();
+
   const app = createExpressApp();
   const PORT = 3000;
 

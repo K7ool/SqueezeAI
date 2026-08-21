@@ -309,6 +309,136 @@ interface DatabaseSchema {
 const DATA_DIR = path.join(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'squeeze_db.json');
 
+import { getSupabaseClient } from './supabase.js';
+
+const TABLE_MAP: Record<string, string> = {
+  users: 'users',
+  scripts: 'generated_scripts',
+  subscribers: 'email_subscribers',
+  apiKeys: 'api_keys',
+  dailyRewards: 'daily_rewards',
+  studioSessions: 'studio_sessions',
+  studioPairingCodes: 'studio_pairing_codes',
+  studioChanges: 'studio_change_events',
+  studioFiles: 'studio_file_versions',
+  studioConflicts: 'studio_conflicts',
+  studioAuditLogs: 'studio_audit_logs',
+  conversations: 'conversations',
+  messages: 'chat_messages',
+  userMemories: 'user_memories',
+  projectMemories: 'project_memories',
+  conversationMemories: 'conversation_memories',
+  executionMemories: 'execution_memories',
+  memoryEvents: 'memory_events',
+};
+
+const PK_MAP: Record<string, string> = {
+  users: 'id',
+  scripts: 'id',
+  subscribers: 'id',
+  apiKeys: 'id',
+  dailyRewards: 'userId',
+  studioSessions: 'sessionId',
+  studioPairingCodes: 'code',
+  studioChanges: 'changeId',
+  studioFiles: 'id',
+  studioConflicts: 'conflictId',
+  studioAuditLogs: 'id',
+  conversations: 'id',
+  messages: 'id',
+  userMemories: 'id',
+  projectMemories: 'id',
+  conversationMemories: 'id',
+  executionMemories: 'id',
+  memoryEvents: 'id',
+};
+
+async function syncUpsert(table: keyof DatabaseSchema, record: any) {
+  try {
+    const supabase = getSupabaseClient(true);
+    const mappedTable = TABLE_MAP[table];
+    const pk = PK_MAP[table];
+    if (!mappedTable || !pk) return;
+    
+    const cleanRecord = { ...record };
+
+    const { error } = await supabase
+      .from(mappedTable)
+      .upsert([cleanRecord], { onConflict: pk });
+
+    if (error) {
+      console.warn(`[Supabase Sync] Upsert to ${mappedTable} failed:`, error.message);
+    }
+  } catch (err: any) {
+    console.warn(`[Supabase Sync] Unexpected error upserting to ${TABLE_MAP[table]}:`, err.message || err);
+  }
+}
+
+async function syncDelete(table: keyof DatabaseSchema, pkValue: string | number) {
+  try {
+    const supabase = getSupabaseClient(true);
+    const mappedTable = TABLE_MAP[table];
+    const pk = PK_MAP[table];
+    if (!mappedTable || !pk) return;
+
+    const { error } = await supabase
+      .from(mappedTable)
+      .delete()
+      .eq(pk, pkValue);
+
+    if (error) {
+      console.warn(`[Supabase Sync] Delete from ${mappedTable} failed:`, error.message);
+    }
+  } catch (err: any) {
+    console.warn(`[Supabase Sync] Unexpected error deleting from ${TABLE_MAP[table]}:`, err.message || err);
+  }
+}
+
+let hasLoadedFromSupabase = false;
+
+export async function initializeSupabaseCache() {
+  if (hasLoadedFromSupabase) return;
+  console.log('🔄 Initializing Squeeze Cache from Supabase...');
+  try {
+    const supabase = getSupabaseClient(true);
+    const data = ensureDb();
+
+    const tables = Object.keys(TABLE_MAP) as Array<keyof DatabaseSchema>;
+    const promises = tables.map(async (table) => {
+      const mappedTable = TABLE_MAP[table];
+      const { data: records, error } = await supabase
+        .from(mappedTable)
+        .select('*');
+
+      if (error) {
+        throw new Error(`Failed to fetch ${mappedTable}: ${error.message}`);
+      }
+      return { table, records };
+    });
+
+    const results = await Promise.all(promises);
+    for (const { table, records } of results) {
+      if (records && records.length > 0) {
+        const pk = PK_MAP[table];
+        const existingMap = new Map(data[table].map((r: any) => [r[pk], r] as [any, any]));
+        
+        for (const rec of records) {
+          existingMap.set(rec[pk], rec);
+        }
+        
+        data[table] = Array.from(existingMap.values()) as any;
+        console.log(`  └─ Loaded ${records.length} records from Supabase table: ${TABLE_MAP[table]}`);
+      }
+    }
+
+    saveDb(data);
+    hasLoadedFromSupabase = true;
+    console.log('🎉 Squeeze Cache successfully hydrated from Supabase.');
+  } catch (err: any) {
+    console.warn('⚠️ Failed to load Squeeze DB from Supabase. Falling back to local JSON:', err.message || err);
+  }
+}
+
 let memoryDb: DatabaseSchema | null = null;
 
 // Ensure data directory and file exist with resilient in-memory fallback
@@ -577,6 +707,7 @@ export const db = {
     };
     data.users.push(newUser);
     saveDb(data);
+    syncUpsert('users', newUser);
     return newUser;
   },
 
@@ -590,6 +721,7 @@ export const db = {
       updatedAt: new Date().toISOString(),
     };
     saveDb(data);
+    syncUpsert('users', data.users[index]);
     return data.users[index];
   },
 
@@ -607,6 +739,7 @@ export const db = {
     user.usedGenerations += 1;
     user.updatedAt = new Date().toISOString();
     saveDb(data);
+    syncUpsert('users', user);
 
     const remaining = isUnlimited ? 9999 : Math.max(0, user.monthlyLimit - user.usedGenerations);
     return { success: true, used: user.usedGenerations, remaining };
@@ -640,6 +773,7 @@ export const db = {
     };
     data.scripts.unshift(newScript);
     saveDb(data);
+    syncUpsert('scripts', newScript);
     return newScript;
   },
 
@@ -649,6 +783,7 @@ export const db = {
     data.scripts = data.scripts.filter(s => !(s.id === id && (s.userId === userId || userId === 'usr_demo_builder')));
     if (data.scripts.length !== prevLen) {
       saveDb(data);
+      syncDelete('scripts', id);
       return true;
     }
     return false;
@@ -660,6 +795,7 @@ export const db = {
     if (!s) return false;
     s.isFavorite = !s.isFavorite;
     saveDb(data);
+    syncUpsert('scripts', s);
     return s.isFavorite;
   },
 
@@ -672,6 +808,7 @@ export const db = {
       existing.status = 'active';
       existing.confirmedAt = new Date().toISOString();
       saveDb(data);
+      syncUpsert('subscribers', existing);
       return existing;
     }
 
@@ -685,6 +822,7 @@ export const db = {
     };
     data.subscribers.push(sub);
     saveDb(data);
+    syncUpsert('subscribers', sub);
     return sub;
   },
 
@@ -710,6 +848,7 @@ export const db = {
     };
     data.apiKeys.push(keyRecord);
     saveDb(data);
+    syncUpsert('apiKeys', keyRecord);
     return keyRecord;
   },
 
@@ -736,6 +875,7 @@ export const db = {
       };
       data.dailyRewards.push(record);
       saveDb(data);
+      syncUpsert('dailyRewards', record);
     }
 
     // Server-Authoritative Grace Period Check (48 Hours)
@@ -748,6 +888,7 @@ export const db = {
       record.currentStreak = 0;
       record.lastClaimedDay = 0;
       saveDb(data);
+      syncUpsert('dailyRewards', record);
     }
 
     return record;
@@ -844,6 +985,7 @@ export const db = {
     }
 
     saveDb(data);
+    syncUpsert('dailyRewards', record);
 
     return {
       success: true,
@@ -862,6 +1004,7 @@ export const db = {
     // Shift lastClaimTimestamp backwards
     record.lastClaimTimestamp = Date.now() - (fastForwardHours * 3600 * 1000);
     saveDb(data);
+    syncUpsert('dailyRewards', record);
     return record;
   },
 
@@ -872,6 +1015,7 @@ export const db = {
     record.lastClaimedDay = 0;
     record.lastClaimTimestamp = 0;
     saveDb(data);
+    syncUpsert('dailyRewards', record);
     return record;
   },
 
@@ -907,15 +1051,20 @@ export const db = {
       data.studioSessions.push(session);
     }
     saveDb(data);
+    syncUpsert('studioSessions', session);
     return session;
   },
 
   deleteStudioSession(token: string): boolean {
     const data = ensureDb();
     const prev = data.studioSessions.length;
+    const sessionToDel = data.studioSessions.find(s => s.token === token);
     data.studioSessions = data.studioSessions.filter(s => s.token !== token);
     if (data.studioSessions.length !== prev) {
       saveDb(data);
+      if (sessionToDel) {
+        syncDelete('studioSessions', sessionToDel.sessionId);
+      }
       return true;
     }
     return false;
@@ -927,6 +1076,7 @@ export const db = {
     data.studioPairingCodes = data.studioPairingCodes.filter(p => p.code !== record.code && p.expiresAt > Date.now());
     data.studioPairingCodes.push(record);
     saveDb(data);
+    syncUpsert('studioPairingCodes', record);
     return record;
   },
 
@@ -943,6 +1093,7 @@ export const db = {
     if (rec) {
       rec.used = true;
       saveDb(data);
+      syncUpsert('studioPairingCodes', rec);
     }
   },
 
@@ -960,6 +1111,7 @@ export const db = {
       data.studioChanges = data.studioChanges.slice(-500);
     }
     saveDb(data);
+    syncUpsert('studioChanges', change);
     return change;
   },
 
@@ -979,6 +1131,7 @@ export const db = {
       ch.status = status === 'applied' ? 'acknowledged' : 'failed';
       if (errorMsg) ch.errorMessage = errorMsg;
       saveDb(data);
+      syncUpsert('studioChanges', ch);
       return true;
     }
     return false;
@@ -1004,6 +1157,7 @@ export const db = {
       data.studioFiles.push(file);
     }
     saveDb(data);
+    syncUpsert('studioFiles', file);
     return file;
   },
 
@@ -1017,6 +1171,7 @@ export const db = {
       data.studioConflicts.push(conflict);
     }
     saveDb(data);
+    syncUpsert('studioConflicts', conflict);
     return conflict;
   },
 
@@ -1033,6 +1188,7 @@ export const db = {
       conf.resolution = resolution;
       conf.resolvedAt = Date.now();
       saveDb(data);
+      syncUpsert('studioConflicts', conf);
       return conf;
     }
     return undefined;
@@ -1052,6 +1208,7 @@ export const db = {
       data.studioAuditLogs = data.studioAuditLogs.slice(0, 500);
     }
     saveDb(data);
+    syncUpsert('studioAuditLogs', log);
     return log;
   },
 
@@ -1104,6 +1261,7 @@ export const db = {
     };
     data.conversations.unshift(conv);
     saveDb(data);
+    syncUpsert('conversations', conv);
     return conv;
   },
 
@@ -1117,6 +1275,7 @@ export const db = {
       updatedAt: new Date().toISOString(),
     };
     saveDb(data);
+    syncUpsert('conversations', data.conversations[idx]);
     return data.conversations[idx];
   },
 
@@ -1128,6 +1287,7 @@ export const db = {
       data.messages = data.messages.filter(m => m.conversationId !== id);
       data.conversationMemories = data.conversationMemories.filter(m => m.conversationId !== id);
       saveDb(data);
+      syncDelete('conversations', id);
       return true;
     }
     return false;
@@ -1163,6 +1323,10 @@ export const db = {
       }
     }
     saveDb(data);
+    syncUpsert('messages', newMsg);
+    if (conv) {
+      syncUpsert('conversations', conv);
+    }
     return newMsg;
   },
 
@@ -1218,15 +1382,20 @@ export const db = {
       data.userMemories.push(result);
     }
     saveDb(data);
+    syncUpsert('userMemories', result);
     return result;
   },
 
   deleteUserMemory(userId: string, keyOrId: string): boolean {
     const data = ensureDb();
     const prev = data.userMemories.length;
+    const memToDel = data.userMemories.find(m => m.userId === userId && (m.key === keyOrId || m.id === keyOrId));
     data.userMemories = data.userMemories.filter(m => !(m.userId === userId && (m.key === keyOrId || m.id === keyOrId)));
     if (data.userMemories.length !== prev) {
       saveDb(data);
+      if (memToDel) {
+        syncDelete('userMemories', memToDel.id);
+      }
       return true;
     }
     return false;
@@ -1234,8 +1403,12 @@ export const db = {
 
   clearUserMemories(userId: string): void {
     const data = ensureDb();
+    const toDel = data.userMemories.filter(m => m.userId === userId);
     data.userMemories = data.userMemories.filter(m => m.userId !== userId);
     saveDb(data);
+    for (const mem of toDel) {
+      syncDelete('userMemories', mem.id);
+    }
   },
 
   // Project Memory
@@ -1286,15 +1459,20 @@ export const db = {
       data.projectMemories.push(result);
     }
     saveDb(data);
+    syncUpsert('projectMemories', result);
     return result;
   },
 
   deleteProjectMemory(userId: string, projectId: string): boolean {
     const data = ensureDb();
     const prev = data.projectMemories.length;
+    const memToDel = data.projectMemories.find(m => m.projectId === projectId && m.userId === userId);
     data.projectMemories = data.projectMemories.filter(m => !(m.projectId === projectId && m.userId === userId));
     if (data.projectMemories.length !== prev) {
       saveDb(data);
+      if (memToDel) {
+        syncDelete('projectMemories', memToDel.id);
+      }
       return true;
     }
     return false;
@@ -1342,6 +1520,7 @@ export const db = {
       data.conversationMemories.push(result);
     }
     saveDb(data);
+    syncUpsert('conversationMemories', result);
     return result;
   },
 
@@ -1359,6 +1538,7 @@ export const db = {
       data.executionMemories = data.executionMemories.slice(0, 200);
     }
     saveDb(data);
+    syncUpsert('executionMemories', record);
     return record;
   },
 
@@ -1405,6 +1585,7 @@ export const db = {
       data.memoryEvents = data.memoryEvents.slice(0, 200);
     }
     saveDb(data);
+    syncUpsert('memoryEvents', record);
     return record;
   },
 
