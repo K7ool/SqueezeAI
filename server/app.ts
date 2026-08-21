@@ -679,7 +679,13 @@ export function createExpressApp() {
       let response;
       if (isExecutionRequest && !isExplicitPreview) {
         emitExecutionEvent(executionId, { type: 'Plan', message: 'Generating engineering plan...', status: 'running' });
-        const plan = await generateTaskPlan(new GoogleGenAI(process.env.GEMINI_API_KEY!), lastMsg, projectContext || '');
+        
+        const apiKey = process.env.GEMINI_API_KEY;
+        if (!apiKey) {
+          throw new Error('GEMINI_API_KEY is not configured');
+        }
+
+        const plan = await generateTaskPlan(new GoogleGenAI(apiKey), lastMsg, projectContext || '');
         emitExecutionEvent(executionId, { type: 'Plan', message: `Plan generated: ${plan.feature}`, status: 'completed' });
         
         // Execute
