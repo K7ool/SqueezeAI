@@ -63,15 +63,26 @@ export async function optionalAuthMiddleware(req: AuthenticatedRequest, res: Res
       const supabase = getSupabaseClient(true);
       const { data: { user: supabaseUser }, error } = await supabase.auth.getUser(token);
       
+      if (error) {
+        console.error('[Auth] Supabase getUser error:', error.message, error.status);
+      }
+
       if (!error && supabaseUser) {
         const user = db.getUserById(supabaseUser.id);
         if (user) {
           req.user = user;
+          console.log(`[Auth] User authenticated: ${user.email}`);
+        } else {
+          console.warn(`[Auth] User exists in Supabase but not in local DB: ${supabaseUser.id}`);
         }
+      } else if (!supabaseUser) {
+        console.warn('[Auth] No user found for token');
       }
     } catch (e) {
-      console.warn('Supabase auth verification error:', e);
+      console.error('[Auth] Supabase auth verification exception:', e);
     }
+  } else {
+    console.log('[Auth] No Authorization header found');
   }
   next();
 }

@@ -311,7 +311,47 @@ const DB_FILE = path.join(DATA_DIR, 'squeeze_db.json');
 
 import { getSupabaseClient, queueSupabaseWrite } from './supabase.js';
 
-// ...
+const TABLE_MAP: Record<string, string> = {
+  users: 'users',
+  scripts: 'generated_scripts',
+  subscribers: 'email_subscribers',
+  apiKeys: 'api_keys',
+  dailyRewards: 'daily_rewards',
+  studioSessions: 'studio_sessions',
+  studioPairingCodes: 'studio_pairing_codes',
+  studioChanges: 'studio_change_events',
+  studioFiles: 'studio_file_versions',
+  studioConflicts: 'studio_conflicts',
+  studioAuditLogs: 'studio_audit_logs',
+  conversations: 'conversations',
+  messages: 'chat_messages',
+  userMemories: 'user_memories',
+  projectMemories: 'project_memories',
+  conversationMemories: 'conversation_memories',
+  executionMemories: 'execution_memories',
+  memoryEvents: 'memory_events'
+};
+
+const PK_MAP: Record<string, string> = {
+  users: 'id',
+  scripts: 'id',
+  subscribers: 'id',
+  apiKeys: 'id',
+  dailyRewards: 'userId',
+  studioSessions: 'sessionId',
+  studioPairingCodes: 'code',
+  studioChanges: 'changeId',
+  studioFiles: 'id',
+  studioConflicts: 'conflictId',
+  studioAuditLogs: 'id',
+  conversations: 'id',
+  messages: 'id',
+  userMemories: 'id',
+  projectMemories: 'id',
+  conversationMemories: 'id',
+  executionMemories: 'id',
+  memoryEvents: 'id'
+};
 
 async function syncUpsert(table: keyof DatabaseSchema, record: any) {
   try {
@@ -342,11 +382,7 @@ async function syncUpsert(table: keyof DatabaseSchema, record: any) {
       }
 
       if (error) {
-        // Suppress noisy RLS or connection timeout warnings
-        const msg = error.message || '';
-        if (!msg.includes('row-level security') && !msg.includes('522')) {
-          console.warn(`[Supabase Sync] Upsert to ${mappedTable} failed:`, msg);
-        }
+        console.warn(`[Supabase Sync] Upsert to ${mappedTable} failed:`, error.message);
       }
     });
   } catch (err: any) {
@@ -447,8 +483,7 @@ export async function initializeSupabaseCache() {
         if (mappedTable && pk) {
           await supabase
             .from(mappedTable)
-            .upsert(recordsToUpsert, { onConflict: pk })
-            .catch(() => {});
+            .upsert(recordsToUpsert, { onConflict: pk });
         }
       }
     }

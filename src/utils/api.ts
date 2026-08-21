@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import { formatAndSanitizeLuau } from './luauFormatter';
 import { RobloxSkillCitation } from '../types/project';
 

@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import { GoogleGenAI } from '@google/genai';
 import { db } from './db.js';
 import { 
   generateLuauScript, 
@@ -25,7 +26,7 @@ import { createCheckoutSession, handleStripeWebhook, PLANS } from './stripe.js';
 import { studioWebSync } from './studioWebSync.js';
 import { OFFICIAL_ROBLOX_STUDIO_PLUGIN_SOURCE } from './robloxStudioPluginSource.js';
 import { executeStudioPublish, executeStudioOperation } from './agentStudioTool.js';
-import { searchMemories, buildAgentContext } from './memoryService.js';
+import { searchMemories, buildAgentContext, extractAndStoreMemories } from './memoryService.js';
 import { executionEventBus, getExecutionHistory, emitExecutionEvent } from './executionService.js';
 
 export function createExpressApp() {
@@ -688,7 +689,7 @@ export function createExpressApp() {
           throw new Error('GEMINI_API_KEY is not configured');
         }
 
-        const plan = await generateTaskPlan(new GoogleGenAI(apiKey), lastMsg, projectContext || '');
+        const plan = await generateTaskPlan(new GoogleGenAI({ apiKey }), lastMsg, projectContext || '');
         emitExecutionEvent(executionId, { type: 'Plan', message: `Plan generated: ${plan.feature}`, status: 'completed' });
         
         // Execute
@@ -826,6 +827,18 @@ export function createExpressApp() {
       });
 
       res.json({ success: true, conversationId, messageRecord: assistantMsg, ...response, studioSyncResult, operationResults });
+
+      // Background Memory Extraction
+      (async () => {
+        try {
+          await extractAndStoreMemories(userId, projectId, conversationId, [
+            { role: 'user', content: lastMsg },
+            { role: 'assistant', content: response.message || '' }
+          ]);
+        } catch (memErr) {
+          console.error('[Memory] Background extraction failed:', memErr);
+        }
+      })();
     } catch (err: any) {
       console.error('Error in /api/chat:', err);
       res.status(500).json({ error: err.message || 'Chat assistant encountered an error.' });

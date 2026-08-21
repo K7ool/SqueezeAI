@@ -224,14 +224,14 @@ Return your analysis in the specified JSON format.`;
     let response;
     try {
       response = await ai.models.generateContent({
-        model: "gemini-3.7-flash",
+        model: "gemini-1.5-flash",
         contents: prompt,
         config: schemaConfig
       });
     } catch (err: any) {
-      console.warn("[Memory Service] gemini-3.7-flash quota exceeded or failed. Falling back to gemini-3.1-flash-lite...", err.message || err);
+      console.warn("[Memory Service] gemini-1.5-flash quota exceeded or failed. Falling back to gemini-1.5-pro...", err.message || err);
       response = await ai.models.generateContent({
-        model: "gemini-3.1-flash-lite",
+        model: "gemini-1.5-pro",
         contents: prompt,
         config: schemaConfig
       });

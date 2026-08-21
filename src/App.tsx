@@ -9,6 +9,7 @@ import { createDefaultProject } from './utils/projectDisk';
 function App() {
   const [user, setUser] = useState<User | null>(null);
   const [quota, setQuota] = useState<UserQuota | null>(null);
+  const [authStatus, setAuthStatus] = useState<'LOADING' | 'AUTHENTICATED' | 'UNAUTHENTICATED'>('LOADING');
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>('login');
   const [project, setProject] = useState<RobloxProject>(createDefaultProject());
@@ -21,15 +22,31 @@ function App() {
     
     if (token && storedUser) {
       try {
-        setUser(JSON.parse(storedUser));
+        const parsedUser = JSON.parse(storedUser);
+        setUser(parsedUser);
+        
         safeFetchJson('/api/user/quota', {
           headers: { 'Authorization': `Bearer ${token}` }
         }).then(res => {
-          if (res.ok && res.data) setQuota(res.data.quota);
+          if (res.ok && res.data) {
+            setQuota(res.data.quota);
+            setAuthStatus('AUTHENTICATED');
+          } else if (res.status === 401) {
+            // Token is invalid or expired
+            handleLogout();
+          } else {
+            // Other error, but we still have a local session
+            setAuthStatus('AUTHENTICATED');
+          }
+        }).catch(() => {
+          setAuthStatus('AUTHENTICATED');
         });
       } catch (e) {
         console.error('Failed to restore session');
+        handleLogout();
       }
+    } else {
+      setAuthStatus('UNAUTHENTICATED');
     }
   }, []);
 
@@ -40,15 +57,24 @@ function App() {
 
   const handleAuthSuccess = (userData: User, token: string) => {
     setUser(userData);
+    setAuthStatus('AUTHENTICATED');
     localStorage.setItem('squeeze_token', token);
     localStorage.setItem('squeeze_user', JSON.stringify(userData));
     setIsAuthOpen(false);
     showToast(`Welcome back, ${userData.name}!`);
+    
+    // Fetch quota immediately after login
+    safeFetchJson('/api/user/quota', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    }).then(res => {
+      if (res.ok && res.data) setQuota(res.data.quota);
+    });
   };
 
   const handleLogout = () => {
     setUser(null);
     setQuota(null);
+    setAuthStatus('UNAUTHENTICATED');
     localStorage.removeItem('squeeze_token');
     localStorage.removeItem('squeeze_user');
     showToast('Signed out successfully');
