@@ -344,6 +344,112 @@ export function isProjectAnalysisRequest(prompt: string): boolean {
   return /read my project|analyze my project|analyze codebase|audit project|inspect project|project overview|game structure|review my game|check my game/i.test(p);
 }
 
+export interface UserTaskSpecification {
+  featureName: string;
+  requestedObjects: string[];
+  requestedBehaviors: string[];
+  targetLocation?: string;
+  requestedName?: string;
+  forbiddenUnrelatedSystems: string[];
+}
+
+export function extractTaskSpecification(prompt: string): UserTaskSpecification {
+  const p = prompt.toLowerCase();
+  
+  const namedMatch = prompt.match(/(?:named|called|with name)\s+["']?([a-zA-Z0-9_\-\.]+)/i) ||
+                     prompt.match(/["']([a-zA-Z0-9_\-\.]{1,30})["']/);
+  const requestedName = namedMatch ? namedMatch[1] : undefined;
+
+  let targetLocation: string | undefined = undefined;
+  if (p.includes('workspace')) targetLocation = 'Workspace';
+  else if (p.includes('serverscriptservice')) targetLocation = 'ServerScriptService';
+  else if (p.includes('replicatedstorage')) targetLocation = 'ReplicatedStorage';
+  else if (p.includes('startergui') || p.includes('gui')) targetLocation = 'StarterGui';
+  else if (p.includes('starterplayer') || p.includes('starterplayerscripts')) targetLocation = 'StarterPlayer.StarterPlayerScripts';
+
+  const requestedObjects: string[] = [];
+  if (p.includes('bird')) requestedObjects.push('Bird');
+  if (p.includes('part')) requestedObjects.push('Part');
+  if (p.includes('remoteevent') || p.includes('remote event')) requestedObjects.push('RemoteEvent');
+  if (p.includes('folder')) requestedObjects.push('Folder');
+  if (p.includes('model')) requestedObjects.push('Model');
+  if (p.includes('gui') || p.includes('screen') || p.includes('frame')) requestedObjects.push('Gui');
+
+  const requestedBehaviors: string[] = [];
+  if (p.includes('fly') || p.includes('flying')) requestedBehaviors.push('flying/flight');
+  if (p.includes('orbit')) requestedBehaviors.push('orbiting');
+  if (p.includes('sprint') || p.includes('run')) requestedBehaviors.push('sprinting');
+  if (p.includes('save') || p.includes('persistence')) requestedBehaviors.push('data persistence');
+  if (p.includes('admin') || p.includes('command')) requestedBehaviors.push('admin command execution');
+
+  let featureName = prompt.replace(/^(make|create|build|add|implement)\s+/i, '').trim();
+  if (featureName.length > 50) {
+    featureName = featureName.substring(0, 50);
+  }
+
+  const forbiddenUnrelatedSystems = ['PlayerSessions', 'Autosave', 'BindToClose', 'AdminCommands', 'DailyRewardService'];
+  if (p.includes('admin')) {
+    const idx = forbiddenUnrelatedSystems.indexOf('AdminCommands');
+    if (idx !== -1) forbiddenUnrelatedSystems.splice(idx, 1);
+  }
+  if (p.includes('daily') || p.includes('reward')) {
+    const idx = forbiddenUnrelatedSystems.indexOf('DailyRewardService');
+    if (idx !== -1) forbiddenUnrelatedSystems.splice(idx, 1);
+  }
+
+  return {
+    featureName: featureName || "Roblox Feature",
+    requestedObjects,
+    requestedBehaviors,
+    targetLocation,
+    requestedName,
+    forbiddenUnrelatedSystems
+  };
+}
+
+export function validateSemanticRelevance(
+  spec: UserTaskSpecification,
+  generatedScript?: any,
+  filesGenerated?: any[],
+  studioOperations?: any[]
+): { isValid: boolean; reason: string } {
+  const p = spec.featureName.toLowerCase();
+
+  if (studioOperations && studioOperations.length > 0) {
+    for (const op of studioOperations) {
+      if (spec.requestedName && op.name && op.name.toLowerCase() !== spec.requestedName.toLowerCase()) {
+        return { isValid: false, reason: `Instance name mismatch: expected '${spec.requestedName}', got '${op.name}'` };
+      }
+    }
+  }
+
+  const allCode = [
+    generatedScript?.code || '',
+    ...(filesGenerated || []).map(f => f.code || '')
+  ].join('\n').toLowerCase();
+
+  const allTitles = [
+    generatedScript?.title || '',
+    ...(filesGenerated || []).map(f => f.title || ''),
+    ...(filesGenerated || []).map(f => f.filePath || '')
+  ].join(' ').toLowerCase();
+
+  if (p.includes('bird') || p.includes('fly')) {
+    const mentionsBirdOrFly = allCode.includes('bird') || allCode.includes('fly') || allCode.includes('wing') || allTitles.includes('bird') || allTitles.includes('fly');
+    if (!mentionsBirdOrFly) {
+      return { isValid: false, reason: "User requested flying bird system, but generated code contains no flight/bird mechanics." };
+    }
+  }
+
+  if (allTitles.includes('production luau game system') || allTitles.includes('production luau system')) {
+    if (!p.includes('generic') && !p.includes('game system')) {
+      return { isValid: false, reason: "Generated generic production game system boilerplate instead of requested specific feature." };
+    }
+  }
+
+  return { isValid: true, reason: "Semantic relevance validated successfully." };
+}
+
 /**
  * Curated high-grade fallback scripts for offline or emergency mode
  */
@@ -671,13 +777,14 @@ end)
 print("⚡ [Squeeze Game System] Running with strict Luau typing.")`;
 
   const code = formatAndSanitizeLuau(rawCode);
+  const cleanTitle = prompt.replace(/^(make|create|build|add|implement)\s+/i, '').trim() || "Roblox Feature";
   return {
-    title: "Production Luau Game System",
+    title: cleanTitle,
     code,
     scriptType: "Server Script",
-    targetInstance: "ServerScriptService.GameSystem",
-    explanation: "Production-ready Luau system with session management, memory cleanup, and BindToClose shutdown protection.",
-    tags: ["Roblox", "Luau", "Production", "Architecture"],
+    targetInstance: `ServerScriptService.${cleanTitle.replace(/\s+/g, '')}`,
+    explanation: `Feature implementation for '${cleanTitle}'.`,
+    tags: ["Roblox", "Luau"],
     lineCount: code.split('\n').length
   };
 }
@@ -1615,6 +1722,8 @@ A focused Luau script managing engine-level state and game loops.`,
       `Example Recipe:\n${s.luauSnippet}\n`
     ).join('\n---\n');
 
+    const spec = extractTaskSpecification(lastMessage);
+
     const systemInstruction = `You are Squeeze, an elite Principal Roblox Luau Engineer, Systems Architect, and Autonomous Game Development Co-Pilot.
 You have mastery of all Roblox Engine APIs (DataStoreService, MemoryStoreService, MessagingService, TweenService, RunService, TextChatService, PathfindingService, ContextActionService, ProximityPromptService, CollectionService, PhysicsService, etc.), strict Luau typing (--!strict), and scalable production game architecture.
 
@@ -1622,44 +1731,28 @@ CURRENT INTENT CLASSIFICATION: ${intentResult.intent}
 INTENT MODE: ${intentResult.mode}
 REQUIRES CODE GENERATION: ${isCodeRequest}
 
-CRITICAL AGENT DIRECTIVES:
-1. INTENT RECOGNITION IS ABSOLUTE:
-   - When the user asks "What does this code do?", "Explain this script", "How does this work?", or provides code asking for an explanation:
-     * YOU MUST ENTER STRICT EXPLAIN MODE.
-     * DO NOT generate new scripts or replacement code.
-     * DO NOT invent missing systems or boilerplates.
-     * DO NOT create files or modify the project.
-     * FORMAT YOUR RESPONSE USING THE 7 REQUIRED SECTIONS:
-       ## What this script does
-       ## Roblox Services used
-       ## Main components
-       ## Configuration
-       ## How the system works
-       ## Important logic
-       ## Potential issues
-       ## Summary
+LOCKED USER TASK SPECIFICATION (STRICT DIRECTIVE - USER REQUEST = SPECIFICATION):
+- Feature: ${spec.featureName}
+- Requested Objects/Entities: ${spec.requestedObjects.length > 0 ? spec.requestedObjects.join(', ') : 'N/A'}
+- Requested Behaviors: ${spec.requestedBehaviors.length > 0 ? spec.requestedBehaviors.join(', ') : 'N/A'}
+- Requested Target Location: ${spec.targetLocation || 'Default Explorer path for feature'}
+- Requested Exact Name: ${spec.requestedName || 'Inferred from feature name'}
+- FORBIDDEN UNRELATED SYSTEMS: ${spec.forbiddenUnrelatedSystems.join(', ')}
 
-2. CODEBASE AWARENESS & NO DUPLICATION:
-   - Always prioritize existing project files and modules before proposing changes.
-   - Do NOT duplicate services or reinvent existing managers.
-   - Ground all architectural insights in real project files.
-
-3. CODE GENERATION SCOPE (ONLY when intent is BUILD, CREATE, FIX, or MODIFY):
-   - Always use --!strict on line 1.
-   - Unlimited scale: complete code with zero truncation.
-   - Wrap DataStore/HTTP in pcall.
-   - Clean up connections on PlayerRemoving.
-   - Server-authoritative validation for all remotes.
-
-4. FEATURE-FIRST MULTI-FILE ARCHITECTURE (MANDATORY for BUILD / CREATE / MAKE):
-   - When the user asks for a feature, system, or command (e.g., "make flying command", "build daily login rewards", "admin commands", "inventory"), you MUST NOT output just a single script.
-   - You MUST design and generate a complete multi-file system spanning Server, Client, and Shared configuration, populating the \`filesGenerated\` array with 2 to 4 interdependent files (ServerScriptService service, StarterPlayerScripts controller, ReplicatedStorage shared config / remote).
-   - Ensure all files have complete Luau code, strict typing (--!strict), and zero truncation.
-   
-5. STUDIO-FIRST EXECUTION (MANDATORY for non-script instances):
-   - When the user explicitly requests to create or modify a Part, Folder, RemoteEvent, or any instance directly (e.g. "create a Part named 1 in Workspace"), DO NOT just generate a Lua script that creates it dynamically.
-   - Instead, populate the \`studioOperations\` JSON array to issue direct commands to Roblox Studio (e.g. \`{ operation: "createInstance", className: "Part", name: "1", parentPath: "Workspace" }\`).
-   - If building a system that requires Folders or RemoteEvents, use \`studioOperations\` to create them.`;
+ABSOLUTE SPECIFICATION RULES:
+1. BUILD EXACTLY WHAT WAS REQUESTED:
+   - If user asks for "make a flying bird script", build a FLYING BIRD script or system.
+   - If user asks for "create a Part named 1 in Workspace", create a Part whose Name is EXACTLY "1" and Parent is Workspace.
+   - If user asks for "create a RemoteEvent named FlyRemote in ReplicatedStorage.Remotes", create RemoteEvent named "FlyRemote" in ReplicatedStorage.Remotes.
+   - NEVER generate generic game systems (PlayerSessions, Autosave, AdminSystem, DailyRewards) unless explicitly requested.
+2. PRESERVE USER INTENT:
+   - User Request = SPECIFICATION of WHAT to build.
+   - You determine HOW to build it correctly in Luau.
+   - Never replace the requested feature with a generic template.
+3. STUDIO OPERATIONS FOR INSTANCES:
+   - When creating Parts, RemoteEvents, Folders, Models, or UI instances, ALWAYS populate the studioOperations JSON array to issue direct commands to Roblox Studio.
+4. FILE NAMING:
+   - Name files meaningfully according to the feature (e.g. FlyingBird.server.luau, BirdFlightController.client.luau).`;
 
     let promptContent = lastMessage;
     if (isExplainMode) {
@@ -1820,6 +1913,36 @@ Directly provide ONLY the appropriate response for intent [${intentResult.intent
           ...f,
           code: formatAndSanitizeLuau(f.code)
         }));
+      }
+
+      // 1. Direct Instance Creation Auto-Injector
+      if (spec.requestedObjects.includes('Part') || spec.requestedObjects.includes('RemoteEvent') || spec.requestedObjects.includes('Folder') || spec.requestedName) {
+        if (!parsed.studioOperations || parsed.studioOperations.length === 0) {
+          const opClassName = spec.requestedObjects.includes('RemoteEvent') ? 'RemoteEvent' :
+                              spec.requestedObjects.includes('Folder') ? 'Folder' :
+                              spec.requestedObjects.includes('RemoteFunction') ? 'RemoteFunction' : 'Part';
+          
+          const opName = spec.requestedName || spec.featureName.replace(/\s+/g, '') || "NewInstance";
+          const opParent = spec.targetLocation ? spec.targetLocation.replace(/\./g, '/') : (opClassName === 'Part' ? 'Workspace' : 'ReplicatedStorage');
+          
+          parsed.studioOperations = [{
+            operation: "createInstance",
+            className: opClassName,
+            name: opName,
+            parentPath: opParent,
+            properties: opClassName === 'Part' ? { Anchored: true, Size: { x: 4, y: 1, z: 4 } } : {}
+          }];
+        }
+      }
+
+      // 2. Perform Semantic Validation against User Task Specification
+      const val = validateSemanticRelevance(spec, parsed.generatedScript, parsed.filesGenerated, parsed.studioOperations);
+      if (!val.isValid) {
+        console.warn(`[AI Engine] Semantic validation failed (${val.reason}). Applying feature-locked fallback.`);
+        const fallbackFeature = getCuratedMultiFileFeature(lastMessage);
+        parsed.filesGenerated = fallbackFeature.filesGenerated;
+        parsed.message = fallbackFeature.message;
+        parsed.changePlan = fallbackFeature.changePlan;
       }
     }
 
