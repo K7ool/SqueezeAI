@@ -1,7 +1,7 @@
 export const OFFICIAL_ROBLOX_STUDIO_PLUGIN_SOURCE = `--!strict
--- Squeeze Roblox Studio WebSync Companion Plugin v3.0.0
+-- Squeeze Roblox Studio WebSync Companion Plugin v5.0.0
 -- Real-Time Bidirectional Synchronization for Roblox Studio & Squeeze AI Agent
--- Supports Live Pairing, Real Instance Operations, Script Sync, and Studio Toolbar UI.
+-- Supports Instant Auto-Connect (Zero-Pairing), ScriptEditorService Updates, and Studio Companion Panel.
 
 local HttpService = game:GetService("HttpService")
 local ServerScriptService = game:GetService("ServerScriptService")
@@ -14,7 +14,12 @@ local ServerStorage = game:GetService("ServerStorage")
 local ChangeHistoryService = game:GetService("ChangeHistoryService")
 local RunService = game:GetService("RunService")
 local StudioService = game:GetService("StudioService")
-local Selection = game:GetService("Selection")
+
+-- Safely acquire ScriptEditorService if available in Studio
+local ScriptEditorService: any = nil
+pcall(function()
+    ScriptEditorService = game:GetService("ScriptEditorService")
+end)
 
 -- Configuration
 local DEFAULT_BACKEND_URL = "http://localhost:3000/api/studio"
@@ -26,11 +31,11 @@ local MAX_RETRY_ATTEMPTS = 5
 local pluginSession = {
     backendUrl = DEFAULT_BACKEND_URL,
     token = "",
-    pairingCode = "",
+    pairingCode = "AUTO_CONNECT",
     sessionId = "",
     projectId = "",
     projectName = "",
-    status = "Disconnected", -- Disconnected, Pairing, Connected, Syncing, Offline, Error
+    status = "Connecting", -- Connecting, Connected, Syncing, Offline, AuthenticationExpired, Error
     lastSyncTime = 0,
     lastHeartbeatTime = 0,
     consecutiveErrors = 0,
@@ -46,8 +51,9 @@ local pluginSession = {
 -- Simple Hash helper
 local function simpleHash(str: string): string
     local h = 0
-    for i = 1, #str do
-        h = (h * 31 + string.byte(str, i)) % 2147483647
+    local s = str or ""
+    for i = 1, #s do
+        h = (h * 31 + string.byte(s, i)) % 2147483647
     end
     return string.format("%08x", h)
 end
@@ -56,13 +62,12 @@ end
 local function resolveParentFromPath(path: string): (Instance?, string)
     if not path or path == "" then return game, "" end
     local parts = string.split(path, "/")
-    local instanceName = parts[#parts]
+    local instanceName = parts[#parts] or "Script"
     
-    -- Extract clean instance name (remove .server.luau, .client.luau, .luau, .lua)
     instanceName = instanceName:gsub("%.server%.luau$", ""):gsub("%.client%.luau$", ""):gsub("%.luau$", ""):gsub("%.lua$", "")
     
     local currentParent: Instance = game
-    local root = parts[1]
+    local root = parts[1] or ""
     
     if root == "src" or root == "ServerScriptService" then
         if parts[2] == "server" or root == "ServerScriptService" then
@@ -90,139 +95,174 @@ local function resolveParentFromPath(path: string): (Instance?, string)
         currentParent = ServerScriptService
     end
     
-    -- Build intermediate folders if needed
     local startIdx = (parts[1] == "src" and 3 or (root == currentParent.Name and 2 or 1))
     for i = startIdx, #parts - 1 do
         local folderName = parts[i]
-        local existingFolder = currentParent:FindFirstChild(folderName)
-        if not existingFolder then
-            local newFolder = Instance.new("Folder")
-            newFolder.Name = folderName
-            newFolder.Parent = currentParent
-            currentParent = newFolder
-        else
-            currentParent = existingFolder
+        if folderName and folderName ~= "" then
+            local existingFolder = currentParent:FindFirstChild(folderName)
+            if not existingFolder then
+                local newFolder = Instance.new("Folder")
+                newFolder.Name = folderName
+                newFolder.Parent = currentParent
+                currentParent = newFolder
+            else
+                currentParent = existingFolder
+            end
         end
     end
     
     return currentParent, instanceName
 end
 
--- Find existing instance in game hierarchy
 local function findInstanceByPath(path: string): (Instance?, Instance?)
     local parent, instanceName = resolveParentFromPath(path)
     if not parent then return nil, nil end
-    
     local found = parent:FindFirstChild(instanceName)
     return found, parent
 end
 
+-- Safely Update Script Source using ScriptEditorService or Direct Property
+local function setScriptSourceSafely(inst: Instance, newSource: string): (boolean, string?)
+    if not inst or not inst:IsA("LuaSourceContainer") then
+        return false, "Target is not a LuaSourceContainer"
+    end
+    
+    local sourceValue = newSource or ""
+    local editorUpdated = false
+
+    if ScriptEditorService then
+        pcall(function()
+            ScriptEditorService:UpdateSourceAsync(inst, function(oldSource)
+                return sourceValue
+            end)
+            editorUpdated = true
+        end)
+    end
+
+    if not editorUpdated then
+        local ok, err = pcall(function()
+            (inst :: any).Source = sourceValue
+        end)
+        if not ok then
+            return false, "Script source update failed (check Script Injection Permissions): " .. tostring(err)
+        end
+    end
+
+    return true, nil
+end
+
 -- Apply incoming operation from Squeeze Website / AI Agent
 local function applyOperation(op: any): (boolean, string?)
+    if not op or type(op) ~= "table" then
+        return false, "Invalid operation payload"
+    end
+
     local opType = op.operation or op.action or "updateScript"
     local path = op.path or op.parentPath or ""
     
     if opType == "createInstance" or opType == "createScript" or opType == "updateScript" or opType == "update" then
-        local className = op.className or (opType:match("Script") and "Script" or "Folder")
+        local className = op.className or (tostring(opType):match("Script") and "Script" or "Folder")
         local existingInst, parent = findInstanceByPath(path)
         if op.name and parent then
-            path = path .. "/" .. op.name
+            path = (path ~= "" and path .. "/" or "") .. tostring(op.name)
             existingInst, parent = findInstanceByPath(path)
         end
-        if not parent then return false, "Invalid path" end
+        if not parent then return false, "Invalid parent path: " .. tostring(path) end
         
-        ChangeHistoryService:SetWaypoint("Before Squeeze Create/Update: " .. path)
+        pcall(function() ChangeHistoryService:SetWaypoint("Before Squeeze Op: " .. tostring(path)) end)
         
         local inst = existingInst
         if not inst then
             inst = Instance.new(className)
             local _, nm = resolveParentFromPath(path)
-            inst.Name = op.name or nm
+            inst.Name = op.name or nm or "NewInstance"
             inst.Parent = parent
-        elseif inst.ClassName ~= className and className:match("Script") then
-            -- Replace script if class mismatch
+        elseif inst.ClassName ~= className and tostring(className):match("Script") then
             local newInst = Instance.new(className)
             newInst.Name = inst.Name
             newInst.Parent = parent
             if inst:IsA("LuaSourceContainer") then
-                newInst.Source = inst.Source
+                setScriptSourceSafely(newInst, (inst :: any).Source)
             end
             inst:Destroy()
             inst = newInst
         end
         
         if op.source and inst:IsA("LuaSourceContainer") then
-            inst.Source = op.source
+            local okSource, errSource = setScriptSourceSafely(inst, op.source)
+            if not okSource then
+                return false, errSource
+            end
             pluginSession.fileHashes[path] = simpleHash(op.source)
         end
         
-        if op.properties then
+        if op.properties and type(op.properties) == "table" then
             for k, v in pairs(op.properties) do
-                pcall(function() inst[k] = v end)
+                pcall(function() (inst :: any)[k] = v end)
             end
         end
         
-        if op.attributes then
+        if op.attributes and type(op.attributes) == "table" then
             for k, v in pairs(op.attributes) do
                 pcall(function() inst:SetAttribute(k, v) end)
             end
         end
         
-        ChangeHistoryService:SetWaypoint("Squeeze Create/Update: " .. path)
+        pcall(function() ChangeHistoryService:SetWaypoint("Squeeze Op Complete: " .. tostring(path)) end)
         return true, nil
         
     elseif opType == "deleteInstance" or opType == "deleteScript" or opType == "delete" then
         local existingInst = findInstanceByPath(path)
         if existingInst then
-            ChangeHistoryService:SetWaypoint("Before Squeeze Delete: " .. path)
+            pcall(function() ChangeHistoryService:SetWaypoint("Before Squeeze Delete: " .. tostring(path)) end)
             existingInst:Destroy()
-            ChangeHistoryService:SetWaypoint("Squeeze Deleted: " .. path)
+            pcall(function() ChangeHistoryService:SetWaypoint("Squeeze Deleted: " .. tostring(path)) end)
         end
         return true, nil
         
     elseif opType == "setProperty" then
         local existingInst = findInstanceByPath(path)
-        if not existingInst then return false, "Instance not found" end
-        ChangeHistoryService:SetWaypoint("Before Squeeze SetProperty: " .. path)
+        if not existingInst then return false, "Instance not found for setProperty: " .. tostring(path) end
+        pcall(function() ChangeHistoryService:SetWaypoint("Before Squeeze SetProperty: " .. tostring(path)) end)
         for k, v in pairs(op.properties or {}) do
-            pcall(function() existingInst[k] = v end)
+            pcall(function() (existingInst :: any)[k] = v end)
         end
-        ChangeHistoryService:SetWaypoint("Squeeze SetProperty: " .. path)
+        pcall(function() ChangeHistoryService:SetWaypoint("Squeeze SetProperty: " .. tostring(path)) end)
         return true, nil
         
     elseif opType == "setAttribute" then
         local existingInst = findInstanceByPath(path)
-        if not existingInst then return false, "Instance not found" end
-        ChangeHistoryService:SetWaypoint("Before Squeeze SetAttribute: " .. path)
+        if not existingInst then return false, "Instance not found for setAttribute: " .. tostring(path) end
+        pcall(function() ChangeHistoryService:SetWaypoint("Before Squeeze SetAttribute: " .. tostring(path)) end)
         for k, v in pairs(op.attributes or {}) do
             pcall(function() existingInst:SetAttribute(k, v) end)
         end
-        ChangeHistoryService:SetWaypoint("Squeeze SetAttribute: " .. path)
+        pcall(function() ChangeHistoryService:SetWaypoint("Squeeze SetAttribute: " .. tostring(path)) end)
         return true, nil
         
     elseif opType == "renameInstance" then
         local existingInst = findInstanceByPath(path)
-        if not existingInst then return false, "Instance not found" end
-        ChangeHistoryService:SetWaypoint("Before Squeeze Rename: " .. path)
-        existingInst.Name = op.newName or op.name
-        ChangeHistoryService:SetWaypoint("Squeeze Rename: " .. path)
+        if not existingInst then return false, "Instance not found for rename: " .. tostring(path) end
+        pcall(function() ChangeHistoryService:SetWaypoint("Before Squeeze Rename: " .. tostring(path)) end)
+        existingInst.Name = op.newName or op.name or existingInst.Name
+        pcall(function() ChangeHistoryService:SetWaypoint("Squeeze Rename: " .. tostring(path)) end)
         return true, nil
         
     elseif opType == "moveInstance" then
         local existingInst = findInstanceByPath(path)
-        local newParent = resolveParentFromPath(op.newParentPath)
+        local newParent = resolveParentFromPath(op.newParentPath or "")
         if not existingInst or not newParent then return false, "Instance or new parent not found" end
-        ChangeHistoryService:SetWaypoint("Before Squeeze Move: " .. path)
+        pcall(function() ChangeHistoryService:SetWaypoint("Before Squeeze Move: " .. tostring(path)) end)
         existingInst.Parent = newParent
-        ChangeHistoryService:SetWaypoint("Squeeze Move: " .. path)
+        pcall(function() ChangeHistoryService:SetWaypoint("Squeeze Move: " .. tostring(path)) end)
         return true, nil
     end
     
-    return false, "Unknown operation: " .. tostring(opType)
+    return false, "Unknown operation type: " .. tostring(opType)
 end
 
--- HTTP Request wrapper with safe pcall and token handling
-local function httpRequest(url: string, method: string, bodyData: any, token: string?): (boolean, any)
+-- HTTP Request wrapper with safe pcall, non-JSON handling, and 401 detection
+local function httpRequest(url: string, method: string, bodyData: any, token: string?): (boolean, any, number)
     local headers = {
         ["Content-Type"] = "application/json"
     }
@@ -241,101 +281,159 @@ local function httpRequest(url: string, method: string, bodyData: any, token: st
         })
     end)
     
-    if not success then return false, tostring(response) end
-    if not response.Success then return false, "HTTP " .. tostring(response.StatusCode) .. ": " .. tostring(response.Body) end
+    if not success then 
+        return false, tostring(response), 0 
+    end
+
+    local statusCode = response.StatusCode or 0
+
+    if statusCode == 401 then
+        return false, "401 Unauthorized", 401
+    end
+
+    if not response.Success then 
+        return false, "HTTP " .. tostring(statusCode) .. ": " .. tostring(response.Body), statusCode 
+    end
     
-    local decodeSuccess, decoded = pcall(function() return HttpService:JSONDecode(response.Body) end)
-    if not decodeSuccess then return false, "Invalid JSON from server" end
+    local decodeSuccess, decoded = pcall(function() 
+        return HttpService:JSONDecode(response.Body) 
+    end)
+
+    if not decodeSuccess then 
+        return false, "Invalid JSON response from server", statusCode 
+    end
     
-    return true, decoded
+    return true, decoded, statusCode
 end
 
 local SqueezePlugin = {}
 
-function SqueezePlugin.PairWithCode(pairingCode: string, customUrl: string?): (boolean, string)
-    if customUrl and customUrl ~= "" then
-        pluginSession.backendUrl = customUrl:gsub("/+$", "")
-    end
+function SqueezePlugin.AutoConnect(): (boolean, string)
+    pluginSession.status = "Connecting"
     
-    pluginSession.status = "Pairing"
-    
-    local pairUrl = pluginSession.backendUrl .. "/pair"
-    local success, data = httpRequest(
-        pairUrl,
+    local autoUrl = pluginSession.backendUrl .. "/auto-connect"
+    local success, data, statusCode = httpRequest(
+        autoUrl,
         "POST",
         {
-            pairingCode = pairingCode:upper():gsub("%s+", ""),
             placeId = game.PlaceId,
             placeName = game.Name ~= "" and game.Name or "Roblox Studio Place",
             universeId = game.GameId,
-            pluginVersion = "3.0.0"
-        }
+            pluginVersion = "5.0.0"
+        },
+        pluginSession.token ~= "" and pluginSession.token or nil
     )
     
-    if not success or not data.success then
-        pluginSession.status = "Error"
+    if not success or not data or not data.success then
+        pluginSession.status = "Offline"
         pluginSession.consecutiveErrors = pluginSession.consecutiveErrors + 1
-        return false, (data and (data.error and data.error.message or data.error)) or "Failed to pair with Squeeze."
+        local errStr = type(data) == "table" and (data.error and (data.error.message or data.error) or "Auto Connect failed") or tostring(data)
+        return false, errStr
     end
     
-    pluginSession.token = data.token
+    pluginSession.token = data.token or ""
     pluginSession.sessionId = data.sessionId or ""
-    pluginSession.projectId = data.projectId or ""
+    pluginSession.projectId = data.projectId or "prj_default_roblox"
     pluginSession.projectName = data.projectName or "Roblox Project"
     pluginSession.status = "Connected"
     pluginSession.consecutiveErrors = 0
     pluginSession.lastHeartbeatTime = os.clock()
     pluginSession.lastSyncTime = os.clock()
     
-    task.spawn(function() SqueezePlugin.PushExplorerTree() end)
+    task.spawn(function() 
+        pcall(function() SqueezePlugin.PushExplorerTree() end) 
+    end)
+
     SqueezePlugin.StartPolling()
     
-    return true, "Successfully paired with Squeeze Web IDE."
+    return true, "Connected automatically to Squeeze AI Platform."
+end
+
+function SqueezePlugin.PairWithCode(pairingCode: string, customUrl: string?): (boolean, string)
+    if customUrl and customUrl ~= "" then
+        pluginSession.backendUrl = customUrl:gsub("/+$", "")
+    end
+    
+    return SqueezePlugin.AutoConnect()
 end
 
 function SqueezePlugin.SendHeartbeat()
-    if pluginSession.token == "" or pluginSession.status == "Disconnected" then return end
+    if pluginSession.token == "" then 
+        SqueezePlugin.AutoConnect()
+        return 
+    end
     
     local heartbeatUrl = pluginSession.backendUrl .. "/heartbeat"
-    local success, data = httpRequest(
+    local success, data, statusCode = httpRequest(
         heartbeatUrl,
         "POST",
         {
             placeId = game.PlaceId,
             placeName = game.Name ~= "" and game.Name or "Roblox Studio Place",
             universeId = game.GameId,
-            pluginVersion = "3.0.0"
+            pluginVersion = "5.0.0"
         },
         pluginSession.token
     )
     
-    if success and data.success then
+    if statusCode == 401 then
+        pluginSession.status = "AuthenticationExpired"
+        pluginSession.token = ""
+        SqueezePlugin.AutoConnect()
+        return
+    end
+
+    if success and data and data.success then
         pluginSession.lastHeartbeatTime = os.clock()
         pluginSession.status = "Connected"
         pluginSession.consecutiveErrors = 0
+        pluginSession.pendingChangesCount = data.pendingChangesCount or 0
     else
         pluginSession.consecutiveErrors = pluginSession.consecutiveErrors + 1
-        if pluginSession.consecutiveErrors >= 3 then pluginSession.status = "Offline" end
+        if pluginSession.consecutiveErrors >= 3 then 
+            pluginSession.status = "Offline" 
+            task.spawn(function() SqueezePlugin.AutoConnect() end)
+        end
     end
 end
 
 function SqueezePlugin.PollAndApplyChanges(): number
-    if pluginSession.token == "" or pluginSession.status == "Disconnected" then return 0 end
+    if pluginSession.token == "" then return 0 end
     
     local pullUrl = pluginSession.backendUrl .. "/operations/pending"
-    local success, data = httpRequest(pullUrl, "GET", nil, pluginSession.token)
+    local success, data, statusCode = httpRequest(pullUrl, "GET", nil, pluginSession.token)
     
-    if not success and tostring(data):find("404") then
+    if statusCode == 401 then
+        pluginSession.status = "AuthenticationExpired"
+        pluginSession.token = ""
+        SqueezePlugin.AutoConnect()
+        return 0
+    end
+
+    if not success and (statusCode == 404 or tostring(data):find("404")) then
         pullUrl = pluginSession.backendUrl .. "/files/pull"
-        success, data = httpRequest(pullUrl, "GET", nil, pluginSession.token)
+        success, data, statusCode = httpRequest(pullUrl, "GET", nil, pluginSession.token)
     end
     
-    if not success or not data.success or not (data.operations or data.changes) then return 0 end
+    if not success or not data or not data.success or not (data.operations or data.changes) then 
+        return 0 
+    end
+
     local ops = data.operations or data.changes
-    
+    if type(ops) ~= "table" then return 0 end
+
     local appliedCount = 0
     for _, op in ipairs(ops) do
-        local ok, err = applyOperation(op)
+        local ok, err = false, "Execution error"
+        local pcallOk, pcallRes, pcallErr = pcall(function()
+            return applyOperation(op)
+        end)
+        if pcallOk then
+            ok = pcallRes
+            err = pcallErr or "Operation failed"
+        else
+            err = tostring(pcallRes)
+        end
         
         local ackUrl = pluginSession.backendUrl .. "/operations/ack"
         httpRequest(
@@ -362,6 +460,7 @@ function SqueezePlugin.PushExplorerTree(): (boolean, number)
     local treeNodes = {}
     
     local function scan(inst: Instance, currentPath: string)
+        if not inst then return end
         local nodePath = currentPath .. "/" .. inst.Name
         table.insert(treeNodes, {
             name = inst.Name,
@@ -372,22 +471,23 @@ function SqueezePlugin.PushExplorerTree(): (boolean, number)
         if inst:IsA("LuaSourceContainer") then
             local ext = inst:IsA("LocalScript") and ".client.luau" or inst:IsA("ModuleScript") and ".luau" or ".server.luau"
             local fullScriptPath = nodePath .. ext
+            local src = (inst :: any).Source or ""
             table.insert(scriptFiles, {
                 path = fullScriptPath,
                 name = inst.Name .. ext,
                 className = inst.ClassName,
-                source = inst.Source
+                source = src
             })
-            pluginSession.fileHashes[fullScriptPath] = simpleHash(inst.Source)
+            pluginSession.fileHashes[fullScriptPath] = simpleHash(src)
         end
         for _, child in ipairs(inst:GetChildren()) do scan(child, nodePath) end
     end
     
-    scan(ServerScriptService, "ServerScriptService")
-    scan(ReplicatedStorage, "ReplicatedStorage")
-    scan(StarterPlayer.StarterPlayerScripts, "StarterPlayer/StarterPlayerScripts")
-    scan(StarterGui, "StarterGui")
-    scan(Workspace, "Workspace")
+    pcall(function() scan(ServerScriptService, "ServerScriptService") end)
+    pcall(function() scan(ReplicatedStorage, "ReplicatedStorage") end)
+    pcall(function() scan(StarterPlayer.StarterPlayerScripts, "StarterPlayer/StarterPlayerScripts") end)
+    pcall(function() scan(StarterGui, "StarterGui") end)
+    pcall(function() scan(Workspace, "Workspace") end)
     
     local snapshotUrl = pluginSession.backendUrl .. "/project/snapshot"
     local success = httpRequest(snapshotUrl, "POST", { tree = treeNodes, scriptFiles = scriptFiles }, pluginSession.token)
@@ -398,10 +498,14 @@ function SqueezePlugin.StartPolling()
     if pluginSession.isPolling then return end
     pluginSession.isPolling = true
     task.spawn(function()
-        while pluginSession.isPolling and pluginSession.token ~= "" do
-            SqueezePlugin.PollAndApplyChanges()
-            if os.clock() - pluginSession.lastHeartbeatTime >= HEARTBEAT_INTERVAL_SECONDS then
-                SqueezePlugin.SendHeartbeat()
+        while pluginSession.isPolling do
+            if pluginSession.token == "" or pluginSession.status == "Offline" or pluginSession.status == "AuthenticationExpired" then
+                SqueezePlugin.AutoConnect()
+            else
+                SqueezePlugin.PollAndApplyChanges()
+                if os.clock() - pluginSession.lastHeartbeatTime >= HEARTBEAT_INTERVAL_SECONDS then
+                    SqueezePlugin.SendHeartbeat()
+                end
             end
             task.wait(POLL_INTERVAL_SECONDS)
         end
@@ -410,7 +514,11 @@ function SqueezePlugin.StartPolling()
 end
 
 function SqueezePlugin.Disconnect(reason: string?)
-    if pluginSession.token ~= "" then pcall(function() httpRequest(pluginSession.backendUrl .. "/disconnect", "POST", { reason = reason or "Studio closed" }, pluginSession.token) end) end
+    if pluginSession.token ~= "" then 
+        pcall(function() 
+            httpRequest(pluginSession.backendUrl .. "/disconnect", "POST", { reason = reason or "Studio closed" }, pluginSession.token) 
+        end) 
+    end
     pluginSession.token = ""
     pluginSession.status = "Disconnected"
     pluginSession.isPolling = false
@@ -419,7 +527,7 @@ end
 function SqueezePlugin.GetStatus() return pluginSession end
 
 -- =========================================================================
--- PLUGIN UI INJECTION (FOR RUNNING AS A REAL STUDIO PLUGIN)
+-- PLUGIN UI INJECTION (FOR ROBLOX STUDIO TOOLBAR & STATUS PANEL)
 -- =========================================================================
 
 local toolbar
@@ -435,9 +543,9 @@ local function createPluginUI(plugin: Plugin)
         true,
         false,
         250,
-        300,
+        280,
         250,
-        300
+        280
     )
     
     widget = plugin:CreateDockWidgetPluginGui("SqueezeWebSyncPanel", widgetInfo)
@@ -445,69 +553,72 @@ local function createPluginUI(plugin: Plugin)
     
     local frame = Instance.new("Frame")
     frame.Size = UDim2.new(1, 0, 1, 0)
-    frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    frame.BackgroundColor3 = Color3.fromRGB(17, 22, 29)
     frame.Parent = widget
     
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, 0, 0, 40)
-    title.Text = "Squeeze WebSync"
-    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.Text = "🍋 Squeeze WebSync v5.0"
+    title.TextColor3 = Color3.fromRGB(255, 201, 60)
     title.BackgroundTransparency = 1
     title.Font = Enum.Font.GothamBold
-    title.TextSize = 18
+    title.TextSize = 16
     title.Parent = frame
     
     local statusLbl = Instance.new("TextLabel")
-    statusLbl.Size = UDim2.new(1, 0, 0, 30)
-    statusLbl.Position = UDim2.new(0, 0, 0, 45)
-    statusLbl.Text = "Status: Disconnected"
-    statusLbl.TextColor3 = Color3.fromRGB(200, 200, 200)
+    statusLbl.Size = UDim2.new(1, -20, 0, 30)
+    statusLbl.Position = UDim2.new(0, 10, 0, 45)
+    statusLbl.Text = "Status: Connecting..."
+    statusLbl.TextColor3 = Color3.fromRGB(63, 185, 80)
     statusLbl.BackgroundTransparency = 1
-    statusLbl.Font = Enum.Font.Gotham
-    statusLbl.TextSize = 14
+    statusLbl.Font = Enum.Font.GothamMedium
+    statusLbl.TextSize = 13
     statusLbl.Parent = frame
+
+    local infoLbl = Instance.new("TextLabel")
+    infoLbl.Size = UDim2.new(1, -20, 0, 50)
+    infoLbl.Position = UDim2.new(0, 10, 0, 80)
+    infoLbl.Text = "Zero-Pairing Auto Connect active.\\nChanges apply live in Studio."
+    infoLbl.TextColor3 = Color3.fromRGB(180, 180, 180)
+    infoLbl.BackgroundTransparency = 1
+    infoLbl.Font = Enum.Font.Gotham
+    infoLbl.TextSize = 11
+    infoLbl.TextWrapped = true
+    infoLbl.Parent = frame
+
+    local reconnectBtn = Instance.new("TextButton")
+    reconnectBtn.Size = UDim2.new(0.8, 0, 0, 36)
+    reconnectBtn.Position = UDim2.new(0.1, 0, 0, 145)
+    reconnectBtn.Text = "Reconnect Studio"
+    reconnectBtn.BackgroundColor3 = Color3.fromRGB(255, 201, 60)
+    reconnectBtn.TextColor3 = Color3.fromRGB(11, 18, 13)
+    reconnectBtn.Font = Enum.Font.GothamBold
+    reconnectBtn.TextSize = 13
+    reconnectBtn.Parent = frame
     
-    local codeInput = Instance.new("TextBox")
-    codeInput.Size = UDim2.new(0.8, 0, 0, 40)
-    codeInput.Position = UDim2.new(0.1, 0, 0, 80)
-    codeInput.PlaceholderText = "Enter Pairing Code"
-    codeInput.Text = ""
-    codeInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-    codeInput.TextColor3 = Color3.fromRGB(255, 255, 255)
-    codeInput.Font = Enum.Font.Gotham
-    codeInput.TextSize = 14
-    codeInput.Parent = frame
-    
-    local connectBtn = Instance.new("TextButton")
-    connectBtn.Size = UDim2.new(0.8, 0, 0, 40)
-    connectBtn.Position = UDim2.new(0.1, 0, 0, 130)
-    connectBtn.Text = "Connect"
-    connectBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
-    connectBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    connectBtn.Font = Enum.Font.GothamBold
-    connectBtn.TextSize = 14
-    connectBtn.Parent = frame
-    
-    connectBtn.MouseButton1Click:Connect(function()
-        if pluginSession.status == "Connected" then
-            SqueezePlugin.Disconnect("User disconnected")
-            connectBtn.Text = "Connect"
-            statusLbl.Text = "Status: Disconnected"
-            codeInput.Visible = true
+    reconnectBtn.MouseButton1Click:Connect(function()
+        reconnectBtn.Text = "Connecting..."
+        local ok, msg = SqueezePlugin.AutoConnect()
+        if ok then
+            statusLbl.Text = "Status: 🟢 Studio Connected"
+            statusLbl.TextColor3 = Color3.fromRGB(63, 185, 80)
+            reconnectBtn.Text = "Reconnect Studio"
         else
-            local code = codeInput.Text
-            if code ~= "" then
-                connectBtn.Text = "Connecting..."
-                local ok, msg = SqueezePlugin.PairWithCode(code)
-                if ok then
-                    connectBtn.Text = "Disconnect"
-                    statusLbl.Text = "Status: Connected"
-                    codeInput.Visible = false
-                else
-                    connectBtn.Text = "Connect"
-                    statusLbl.Text = "Error: " .. msg
-                end
-            end
+            statusLbl.Text = "Status: 🔴 " .. msg
+            statusLbl.TextColor3 = Color3.fromRGB(255, 100, 100)
+            reconnectBtn.Text = "Retry Connection"
+        end
+    end)
+
+    -- Auto Connect on UI creation
+    task.defer(function()
+        local ok, msg = SqueezePlugin.AutoConnect()
+        if ok then
+            statusLbl.Text = "Status: 🟢 Studio Connected"
+            statusLbl.TextColor3 = Color3.fromRGB(63, 185, 80)
+        else
+            statusLbl.Text = "Status: 🔴 Offline"
+            statusLbl.TextColor3 = Color3.fromRGB(255, 100, 100)
         end
     end)
     
@@ -515,6 +626,11 @@ local function createPluginUI(plugin: Plugin)
         widget.Enabled = not widget.Enabled
     end)
 end
+
+-- Auto Connect when script runs
+task.spawn(function()
+    SqueezePlugin.AutoConnect()
+end)
 
 -- If ran as a Roblox plugin
 if plugin then

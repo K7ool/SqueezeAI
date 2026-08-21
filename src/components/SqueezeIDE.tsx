@@ -7,7 +7,7 @@ import {
 import { ChatStudio } from './ChatStudio';
 import { ProjectFolderInspector } from './ProjectFolderInspector';
 import { InteractiveGameMap } from './InteractiveGameMap';
-import { fetchStudioSyncStatus, StudioSyncState, disconnectStudioSession } from '../utils/syncClient';
+import { fetchStudioSyncStatus, disconnectStudioSession, syncAllToStudio, ProjectSyncState } from '../utils/syncClient';
 
 interface SqueezeIDEProps {
   user: User | null;
@@ -29,7 +29,7 @@ export const SqueezeIDE: React.FC<SqueezeIDEProps> = ({
   onShowToast 
 }) => {
   const [activeTab, setActiveTab] = useState<'chats' | 'project' | 'map' | 'settings'>('chats');
-  const [syncState, setSyncState] = useState<StudioSyncState | null>(null);
+  const [syncState, setSyncState] = useState<ProjectSyncState | null>(null);
   const [isPolling, setIsPolling] = useState(true);
   const [showStatusPopover, setShowStatusPopover] = useState(false);
 
@@ -46,6 +46,18 @@ export const SqueezeIDE: React.FC<SqueezeIDEProps> = ({
   }, [project.id, isPolling]);
 
   const isConnected = syncState?.session?.isOnline;
+
+  const handleSyncAll = async () => {
+    onShowToast('⏳ Syncing all to Studio...');
+    const res = await syncAllToStudio(project.id);
+    if (res.success) {
+      onShowToast('✓ Sync triggered successfully');
+      const state = await fetchStudioSyncStatus(project.id);
+      if (state) setSyncState(state);
+    } else {
+      onShowToast(`❌ Sync error: ${res.error || 'Failed'}`);
+    }
+  };
 
   const handleDisconnect = async () => {
     if (!syncState?.session?.token) {
@@ -123,13 +135,21 @@ export const SqueezeIDE: React.FC<SqueezeIDEProps> = ({
                   </div>
                   <div className="flex justify-between">
                     <span className="text-white/40">Plugin:</span>
-                    <span>v2.5.0 WebSync</span>
+                    <span>v5.0.0 WebSync</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-white/40">Pending Queue:</span>
                     <span className="text-[#FFC93C] font-bold">{syncState?.pendingChangesCount || 0} changes</span>
                   </div>
                 </div>
+
+                <button 
+                  onClick={handleSyncAll}
+                  className="w-full py-1.5 mb-2 bg-[#FFC93C]/10 text-[#FFC93C] border border-[#FFC93C]/30 rounded-lg text-xs font-bold hover:bg-[#FFC93C]/20 transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Sync All to Studio</span>
+                </button>
 
                 {isConnected && (
                   <button 
@@ -148,7 +168,7 @@ export const SqueezeIDE: React.FC<SqueezeIDEProps> = ({
           {user ? (
             <div className="flex items-center gap-3">
               <div className="text-right text-xs hidden sm:block">
-                <span className="text-white/90 font-bold block leading-none">{user.username}</span>
+                <span className="text-white/90 font-bold block leading-none">{user.name}</span>
                 <span className="text-[10px] text-[#FFC93C] uppercase tracking-wider font-semibold">Pro Creator</span>
               </div>
               <button 
@@ -235,7 +255,13 @@ export const SqueezeIDE: React.FC<SqueezeIDEProps> = ({
 
           {activeTab === 'map' && (
             <div className="flex-1 p-4 overflow-hidden">
-               <InteractiveGameMap project={project} />
+               <InteractiveGameMap 
+                 project={project} 
+                 onUpdateProject={onUpdateProject}
+                 onShowToast={onShowToast}
+                 onOpenCodeInEditor={() => setActiveTab('project')}
+                 onSendPromptToAgent={() => setActiveTab('chats')}
+               />
             </div>
           )}
 

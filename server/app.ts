@@ -526,6 +526,92 @@ export function createExpressApp() {
   // REAL-TIME ROBLOX STUDIO WEBSYNC API (CANONICAL /api/studio & /api/sync)
   // -------------------------------------------------------------
 
+  // 0. Studio Auto-Connect Endpoint (Zero-Pairing Instant Handshake)
+  const handleAutoConnect = (req: AuthenticatedRequest, res: any) => {
+    try {
+      const authHeader = req.headers['authorization'] || '';
+      const existingToken = authHeader.replace(/^Bearer\s+/i, '') || req.body.token || req.body.userToken;
+      const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket.remoteAddress;
+
+      const { placeId, universeId, placeName, pluginVersion, projectId } = req.body;
+
+      const result = studioWebSync.autoConnectPlugin({
+        placeId: placeId ? Number(placeId) : undefined,
+        universeId: universeId ? Number(universeId) : undefined,
+        placeName: placeName || 'Roblox Studio Place',
+        pluginVersion: pluginVersion || '5.0.0',
+        projectId: projectId || 'prj_default_roblox',
+        userId: req.user?.id,
+        existingToken,
+        clientIp
+      });
+
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({
+        success: false,
+        error: { code: 'AUTO_CONNECT_FAILED', message: err.message || 'Auto connect failed.' }
+      });
+    }
+  };
+
+  app.post('/api/studio/auto-connect', optionalAuthMiddleware, handleAutoConnect);
+  app.post('/api/sync/auto-connect', optionalAuthMiddleware, handleAutoConnect);
+
+  // Health Check
+  app.get(['/api/studio/health', '/api/sync/health'], (req, res) => {
+    res.json({
+      success: true,
+      service: 'studio-websync',
+      version: '5.0.0',
+      timestamp: new Date().toISOString()
+    });
+  });
+
+  // Live Studio Status Endpoint (Real-Time Detection)
+  app.get(['/api/studio/status', '/api/studio/status/live'], optionalAuthMiddleware, (req: AuthenticatedRequest, res) => {
+    try {
+      const projectId = (req.query.projectId as string) || 'prj_default_roblox';
+      const state = studioWebSync.getProjectSyncState(projectId);
+      const isConnected = state.session && state.session.isOnline;
+
+      res.json({
+        success: true,
+        connected: isConnected,
+        status: isConnected ? 'Connected' : (state.session ? state.session.status : 'Offline'),
+        projectId: state.session?.projectId || projectId,
+        projectName: state.session?.projectName || 'Roblox Project',
+        placeId: state.session?.placeId,
+        universeId: state.session?.universeId,
+        pluginVersion: state.session?.pluginVersion || '5.0.0',
+        lastHeartbeat: state.session?.lastHeartbeat ? new Date(state.session.lastHeartbeat).toISOString() : null,
+        pendingChangesCount: state.pendingChangesCount,
+        filesCount: state.filesCount
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: { code: 'STATUS_FAILED', message: err.message } });
+    }
+  });
+
+  // Sync-All Endpoint (Force poll/flush all changes)
+  const handleSyncAll = (req: any, res: any) => {
+    try {
+      const projectId = (req.body.projectId as string) || (req.query.projectId as string) || 'prj_default_roblox';
+      const pendingChanges = db.getStudioPendingChanges(projectId, 'studio');
+      res.json({
+        success: true,
+        appliedCount: 0,
+        pendingCount: pendingChanges.length,
+        changes: pendingChanges
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: { code: 'SYNC_ALL_FAILED', message: err.message } });
+    }
+  };
+
+  app.post(['/api/studio/sync-all', '/api/sync/sync-all'], handleSyncAll);
+  app.get(['/api/studio/sync-all', '/api/sync/sync-all'], handleSyncAll);
+
   // 1. Session Initialization (from Website UI)
   const handleCreateSession = (req: AuthenticatedRequest, res: any) => {
     try {
@@ -1017,6 +1103,17 @@ export function createExpressApp() {
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Failed to reset streak.' });
     }
+  });
+
+  // 404 Catch-All for /api/* routes (Ensures API requests NEVER return HTML pages)
+  app.all('/api/*', (req, res) => {
+    res.status(404).json({
+      success: false,
+      error: {
+        code: 'NOT_FOUND',
+        message: `API endpoint ${req.method} ${req.path} not found.`
+      }
+    });
   });
 
   // Global Express JSON Error Handler (Prevents HTML 500 pages)

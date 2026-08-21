@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AuthModal } from './components/AuthModal';
 import { SqueezeIDE } from './components/SqueezeIDE';
-import { User, UserQuota } from './types';
+import { User, UserQuota, AuthMode } from './types';
 import { RobloxProject } from './types/project';
 import { safeFetchJson } from './utils/api';
 import { createDefaultProject } from './utils/projectDisk';
@@ -10,7 +10,7 @@ function App() {
   const [user, setUser] = useState<User | null>(null);
   const [quota, setQuota] = useState<UserQuota | null>(null);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
-  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
+  const [authMode, setAuthMode] = useState<AuthMode>('login');
   const [project, setProject] = useState<RobloxProject>(createDefaultProject());
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -43,7 +43,7 @@ function App() {
     localStorage.setItem('squeeze_token', token);
     localStorage.setItem('squeeze_user', JSON.stringify(userData));
     setIsAuthOpen(false);
-    showToast(`Welcome back, ${userData.username}!`);
+    showToast(`Welcome back, ${userData.name}!`);
   };
 
   const handleLogout = () => {
@@ -71,7 +71,7 @@ function App() {
         project={project}
         onLogout={handleLogout}
         onOpenAuth={(mode) => {
-          setAuthMode(mode);
+          setAuthMode(mode === 'signup' ? 'register' : 'login');
           setIsAuthOpen(true);
         }}
         onUpdateProject={setProject}

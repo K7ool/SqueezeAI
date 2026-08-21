@@ -517,11 +517,14 @@ export const AppShell: React.FC<AppShellProps> = ({
               {/* ---------------- AI WORKSPACE ---------------- */}
               {activeWorkspace === 'ai' && activeSubTab === 'chat' && (
                 <ChatStudio
+                  user={user || null}
+                  quota={quota || null}
                   project={project}
+                  onSelectScript={() => {}}
                   onUpdateProject={onUpdateProject}
                   onShowToast={onShowToast}
-                  onOpenCodeInEditor={handleOpenFileInEditor}
-                  initialPrompt={pendingAgentPrompt}
+                  onOpenFileInEditor={handleOpenFileInEditor}
+                  pendingAgentPrompt={pendingAgentPrompt}
                 />
               )}
 

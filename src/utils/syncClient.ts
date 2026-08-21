@@ -194,3 +194,38 @@ export async function getStudioPluginSource(): Promise<string> {
   return '';
 }
 
+export async function autoConnectStudio(projectId: string = 'prj_default_roblox'): Promise<{
+  success: boolean;
+  sessionId?: string;
+  token?: string;
+  status?: string;
+  error?: string;
+}> {
+  const res = await safeFetchJson('/api/studio/auto-connect', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ projectId })
+  });
+  if (res.ok && res.data?.success) {
+    return res.data;
+  }
+  return { success: false, error: res.error || 'Auto connect failed' };
+}
+
+export async function syncAllToStudio(projectId: string = 'prj_default_roblox'): Promise<{
+  success: boolean;
+  appliedCount?: number;
+  pendingCount?: number;
+  error?: string;
+}> {
+  const res = await safeFetchJson('/api/studio/sync-all', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ projectId })
+  });
+  if (res.ok && res.data?.success) {
+    return res.data;
+  }
+  return { success: false, error: res.error || 'Sync all failed' };
+}
+

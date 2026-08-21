@@ -364,6 +364,102 @@ class StudioWebSyncManager {
   }
 
   // -----------------------------------------------------------
+  // 2b. AUTO CONNECT (Zero-Pairing Instant Plugin Handshake)
+  // -----------------------------------------------------------
+  public autoConnectPlugin(payload: {
+    placeId?: number;
+    universeId?: number;
+    placeName?: string;
+    pluginVersion?: string;
+    projectId?: string;
+    userId?: string;
+    existingToken?: string;
+    clientIp?: string;
+  }): {
+    success: boolean;
+    sessionId: string;
+    projectId: string;
+    projectName: string;
+    token: string;
+    expiresAt: number;
+    placeId?: number;
+    universeId?: number;
+    status: string;
+    session: StudioSession;
+  } {
+    let session: StudioSession | undefined;
+
+    if (payload.existingToken) {
+      session = this.memorySessions.get(payload.existingToken) || db.getStudioSessionByToken(payload.existingToken);
+    }
+
+    const targetProjectId = payload.projectId || (session ? session.projectId : 'prj_default_roblox');
+
+    if (!session) {
+      for (const s of this.memorySessions.values()) {
+        if (
+          (payload.placeId && s.placeId === payload.placeId) ||
+          (payload.universeId && s.universeId === payload.universeId) ||
+          (s.projectId === targetProjectId && s.status !== 'disconnected')
+        ) {
+          session = s;
+          break;
+        }
+      }
+    }
+
+    const token = session ? session.token : ('sqz_sync_' + crypto.randomBytes(16).toString('hex'));
+    const sessionId = session ? session.sessionId : ('ses_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8));
+    const projectName = payload.placeName || (session ? session.projectName : 'Roblox Game');
+
+    const updatedSession: StudioSession = {
+      sessionId,
+      userId: payload.userId || (session ? session.userId : undefined),
+      projectId: targetProjectId,
+      projectName,
+      placeId: payload.placeId || (session ? session.placeId : undefined),
+      universeId: payload.universeId || (session ? session.universeId : undefined),
+      placeName: payload.placeName || (session ? session.placeName : 'Roblox Studio Place'),
+      pairingCode: session ? session.pairingCode : 'AUTO_CONNECT',
+      token,
+      status: 'connected',
+      connectedAt: Date.now(),
+      lastHeartbeat: Date.now(),
+      pluginVersion: payload.pluginVersion || (session ? session.pluginVersion : '5.0.0'),
+      clientIp: payload.clientIp
+    };
+
+    this.memorySessions.set(token, updatedSession);
+    db.saveStudioSession({
+      ...updatedSession,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+
+    this.logAudit(targetProjectId, {
+      type: 'studio_auto_connected',
+      author: 'studio',
+      sessionId,
+      details: `Auto-connected Studio instance for "${projectName}" (Place ID: ${payload.placeId || 'Local'}, Universe ID: ${payload.universeId || 'N/A'})`
+    });
+
+    const expiresAt = Date.now() + 24 * 60 * 60 * 1000;
+
+    return {
+      success: true,
+      sessionId,
+      projectId: targetProjectId,
+      projectName,
+      token,
+      expiresAt,
+      placeId: payload.placeId,
+      universeId: payload.universeId,
+      status: 'connected',
+      session: updatedSession
+    };
+  }
+
+  // -----------------------------------------------------------
   // 3. DIRECT CONNECT (Connect endpoint for Studio or Token)
   // -----------------------------------------------------------
   public connectPluginDirect(payload: {
