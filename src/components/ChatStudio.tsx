@@ -9,6 +9,7 @@ import { MarkdownRenderer } from './MarkdownRenderer';
 import { LuauCodeViewer } from './LuauCodeViewer';
 import { AgentMemoryModal } from './AgentMemoryModal';
 import { safeFetchJson, getClientSideEmergencyResponse } from '../utils/api';
+import { ExecutionEventItem, ExecutionEvent } from './ExecutionEventItem';
 
 interface ChatStudioProps {
   user: User | null;
@@ -37,6 +38,8 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
   const [expandedCodeForMsg, setExpandedCodeForMsg] = useState<Record<string, boolean>>({});
   const [chatSearchQuery, setChatSearchQuery] = useState('');
   const [isMemoryModalOpen, setIsMemoryModalOpen] = useState(false);
+  const [activeExecutionId, setActiveExecutionId] = useState<string | null>(null);
+  const [activeExecutionEvents, setActiveExecutionEvents] = useState<ExecutionEvent[]>([]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -244,7 +247,33 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
     setInputText('');
     setIsSending(true);
 
+    const executionId = `exec_${Date.now()}`;
+    setActiveExecutionId(executionId);
+    setActiveExecutionEvents([]);
+
+    let sse: EventSource | null = null;
+
     try {
+      // Connect to Server-Sent Events execution event stream
+      sse = new EventSource(`/api/agent/executions/${executionId}/stream`);
+      sse.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'connected') return;
+          setActiveExecutionEvents((prev) => {
+            if (prev.some(e => e.type === data.type && e.message === data.message && e.timestamp === data.timestamp)) {
+              return prev;
+            }
+            return [...prev, data];
+          });
+        } catch (err) {
+          console.error('Error parsing execution event:', err);
+        }
+      };
+      sse.onerror = () => {
+        if (sse) sse.close();
+      };
+
       const projectContext = `Current Roblox Project: "${project.name}"\nTotal Scripts: ${project.files.length}`;
       const token = localStorage.getItem('squeeze_token');
 
@@ -257,6 +286,7 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
         body: JSON.stringify({
           conversationId: activeSessionId,
           projectId: project.id,
+          executionId,
           messages: currentMessages.map(m => ({ role: m.role, content: m.content })),
           projectContext,
           projectFiles: project.files.map(f => ({
@@ -334,11 +364,49 @@ export const ChatStudio: React.FC<ChatStudioProps> = ({
       onShowToast(`❌ ${err.message}`);
     } finally {
       setIsSending(false);
+      if (sse) {
+        sse.close();
+      }
     }
   };
 
   const toggleCodeView = (msgId: string) => {
     setExpandedCodeForMsg(prev => ({ ...prev, [msgId]: !prev[msgId] }));
+  };
+
+  const mapThinkingStepToEvent = (step: any, index: number): ExecutionEvent => {
+    if (step.type) {
+      return step as ExecutionEvent;
+    }
+    
+    const stageLower = (step.stage || '').toLowerCase();
+    let type = 'Reasoning';
+    if (stageLower.includes('read')) {
+      type = 'Read';
+    } else if (stageLower.includes('search') || stageLower.includes('grep')) {
+      type = 'Search';
+    } else if (stageLower.includes('edit') || stageLower.includes('implement')) {
+      type = 'Edit';
+    } else if (stageLower.includes('create')) {
+      type = 'Create';
+    } else if (stageLower.includes('verify') || stageLower.includes('review') || stageLower.includes('sync')) {
+      type = 'Verification';
+    } else if (stageLower.includes('complete') || stageLower.includes('success')) {
+      type = 'Success';
+    } else if (stageLower.includes('error')) {
+      type = 'Error';
+    } else if (stageLower.includes('intent') || stageLower.includes('plan')) {
+      type = 'Plan';
+    }
+    
+    return {
+      type,
+      timestamp: Date.now() - (10 - index) * 1000,
+      message: step.details || step.stage || 'Thinking...',
+      status: step.completed ? 'completed' : 'running',
+      metadata: step.metadata || {},
+      executionId: 'hist'
+    };
   };
 
   const filteredSessions = sessions.filter(s => 

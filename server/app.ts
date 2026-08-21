@@ -22,6 +22,7 @@ import { studioWebSync } from './studioWebSync.js';
 import { OFFICIAL_ROBLOX_STUDIO_PLUGIN_SOURCE } from './robloxStudioPluginSource.js';
 import { executeStudioPublish, executeStudioOperation } from './agentStudioTool.js';
 import { searchMemories, buildAgentContext } from './memoryService.js';
+import { executionEventBus, getExecutionHistory, emitExecutionEvent } from './executionService.js';
 
 export function createExpressApp() {
   const app = express();
@@ -587,7 +588,7 @@ export function createExpressApp() {
   // AI Chat with Project Assistant (Studio-First Execution Engine & Persistent Memory Integrated)
   app.post('/api/chat', optionalAuthMiddleware, async (req: AuthenticatedRequest, res) => {
     try {
-      const { messages, projectContext, projectFiles, conversationId: inputConvId, projectId: inputProjectId } = req.body;
+      const { messages, projectContext, projectFiles, conversationId: inputConvId, projectId: inputProjectId, executionId: inputExecId } = req.body;
       if (!messages || !Array.isArray(messages) || messages.length === 0) {
         return res.status(400).json({ error: 'Messages array is required.' });
       }
@@ -596,6 +597,7 @@ export function createExpressApp() {
       const projectId = inputProjectId || 'prj_default_roblox';
       const lastMsg = messages[messages.length - 1]?.content || '';
       const lastMsgLower = lastMsg.toLowerCase();
+      const executionId = inputExecId || `exec_${Date.now()}`;
 
       // Ensure conversation exists in DB
       let conversationId = inputConvId;
@@ -615,7 +617,15 @@ export function createExpressApp() {
         userId,
         projectId,
         role: 'user',
-        content: lastMsg
+        content: lastMsg,
+        executionId
+      });
+
+      // Emit starting events to the execution trace
+      emitExecutionEvent(executionId, {
+        type: 'Plan',
+        message: 'Parsing conversation goal and classifying user intent...',
+        status: 'running'
       });
 
       const isExplanationQuery = /^(what does|explain|how does|tell me about|what is|how do|show an example of)/i.test(lastMsgLower);
@@ -634,12 +644,20 @@ export function createExpressApp() {
             userId,
             projectId,
             role: 'assistant',
-            content: offlineMsg
+            content: offlineMsg,
+            executionId
+          });
+
+          emitExecutionEvent(executionId, {
+            type: 'Error',
+            message: 'Roblox Studio offline. Cannot execute operation.',
+            status: 'failed'
           });
 
           return res.json({
             success: false,
             conversationId,
+            executionId,
             error: {
               code: 'STUDIO_OFFLINE',
               message: offlineMsg
@@ -658,7 +676,8 @@ export function createExpressApp() {
       const response = await chatWithProjectAssistant(messages, projectContext || '', projectFiles, {
         userId,
         projectId,
-        conversationId
+        conversationId,
+        executionId
       });
 
       // Automatic WebSync execution & verification if files were generated or execution requested
@@ -689,7 +708,31 @@ export function createExpressApp() {
         }
 
         if (filesToSync.length > 0) {
+          emitExecutionEvent(executionId, {
+            type: 'Verification',
+            message: `Applying and syncing ${filesToSync.length} generated script(s) to Roblox Studio...`,
+            status: 'running',
+            metadata: {
+              filePath: filesToSync[0].path,
+              linesAdded: filesToSync.reduce((acc, f) => acc + f.source.split('\n').length, 0)
+            }
+          });
+
           studioSyncResult = await executeStudioPublish(projectId, filesToSync);
+
+          if (studioSyncResult && studioSyncResult.success) {
+            emitExecutionEvent(executionId, {
+              type: 'Success',
+              message: `Successfully synchronized ${filesToSync.length} file(s) into Roblox Studio workspace.`,
+              status: 'completed'
+            });
+          } else {
+            emitExecutionEvent(executionId, {
+              type: 'Warning',
+              message: `Sync partially failed or warning returned from Roblox Studio: ${studioSyncResult?.summary || 'Unknown warning'}`,
+              status: 'completed'
+            });
+          }
         }
       }
 
@@ -697,10 +740,51 @@ export function createExpressApp() {
       const operationResults: any[] = [];
       if (response.studioOperations && Array.isArray(response.studioOperations)) {
         for (const op of response.studioOperations) {
+          const typeMap: Record<string, string> = {
+            createInstance: 'Create',
+            deleteInstance: 'Delete',
+            renameInstance: 'Rename',
+            moveInstance: 'Move',
+            setProperty: 'Edit',
+            setAttribute: 'Edit'
+          };
+          
+          emitExecutionEvent(executionId, {
+            type: typeMap[op.operation] || 'Tool',
+            message: `${op.operation === 'createInstance' ? 'Creating' : 'Modifying'} Instance: "${op.parentPath || 'Workspace'}/${op.name || 'Instance'}" (ClassName: ${op.className || 'Part'})`,
+            status: 'running',
+            metadata: {
+              className: op.className,
+              parentPath: op.parentPath,
+              properties: op.properties
+            }
+          });
+
           const resOp = await executeStudioOperation(projectId, op);
           operationResults.push({ operation: op.operation, result: resOp });
+
+          if (resOp && resOp.success) {
+            emitExecutionEvent(executionId, {
+              type: 'Success',
+              message: `✓ Verified Studio operation: ${op.operation} on "${op.name || 'Instance'}"`,
+              status: 'completed'
+            });
+          } else {
+            emitExecutionEvent(executionId, {
+              type: 'Error',
+              message: `❌ Studio operation failed: ${op.operation} on "${op.name || 'Instance'}"`,
+              status: 'failed'
+            });
+          }
         }
       }
+
+      // Concluding Success event
+      emitExecutionEvent(executionId, {
+        type: 'Success',
+        message: 'Completed code generation and verified environment integrity.',
+        status: 'completed'
+      });
 
       // Persist Assistant Message in DB
       const assistantMsg = db.createMessage({
@@ -715,6 +799,7 @@ export function createExpressApp() {
         actionPerformed: response.actionPerformed,
         filesGenerated: response.filesGenerated,
         suggestedPrompts: response.suggestedPrompts,
+        executionId,
         executionDetails: {
           studioSyncResult,
           operationResults
@@ -726,6 +811,59 @@ export function createExpressApp() {
       console.error('Error in /api/chat:', err);
       res.status(500).json({ error: err.message || 'Chat assistant encountered an error.' });
     }
+  });
+
+  // -------------------------------------------------------------
+  // REAL-TIME AGENT EXECUTION EVENT STREAM (SSE)
+  // -------------------------------------------------------------
+  app.get('/api/agent/executions/:id/stream', (req, res) => {
+    const executionId = req.params.id;
+    if (!executionId) {
+      return res.status(400).json({ error: 'Execution ID is required.' });
+    }
+
+    // Establish Server-Sent Events connection
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive'
+    });
+
+    // Send initial connection confirmation
+    res.write(`data: ${JSON.stringify({ type: 'connected', timestamp: Date.now(), executionId })}\n\n`);
+
+    // Flush any existing logs for late-joining or reconnecting streams
+    const existingHistory = getExecutionHistory(executionId);
+    for (const event of existingHistory) {
+      res.write(`data: ${JSON.stringify(event)}\n\n`);
+    }
+
+    // Subscribe to the global Event Bus
+    const eventName = `event:${executionId}`;
+    const handleEvent = (event: any) => {
+      res.write(`data: ${JSON.stringify(event)}\n\n`);
+    };
+
+    executionEventBus.on(eventName, handleEvent);
+
+    // Keep connection alive with heartbeat interval
+    const heartbeat = setInterval(() => {
+      res.write(': heartbeat\n\n');
+    }, 15000);
+
+    // Cleanup on client disconnect
+    req.on('close', () => {
+      clearInterval(heartbeat);
+      executionEventBus.off(eventName, handleEvent);
+    });
+  });
+
+  app.get('/api/agent/executions/:id/history', (req, res) => {
+    const executionId = req.params.id;
+    if (!executionId) {
+      return res.status(400).json({ error: 'Execution ID is required.' });
+    }
+    res.json({ success: true, history: getExecutionHistory(executionId) });
   });
 
   // -------------------------------------------------------------

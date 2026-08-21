@@ -6,6 +6,7 @@ import { studio } from "./agentStudioTool.js";
 import { studioWebSync } from "./studioWebSync.js";
 import { buildAgentContext, extractAndStoreMemories, getRecentObjects, saveRecentObjects, recordInstanceCreatedOrFound, resolveInstancePath } from "./memoryService.js";
 import { db } from "./db.js";
+import { emitExecutionEvent } from "./executionService.js";
 
 export { classifyUserIntent };
 export type { AgentIntent };
@@ -2126,7 +2127,7 @@ export async function chatWithProjectAssistant(
   messages: { role: string; content: string }[],
   projectContext: string,
   projectFiles?: ProjectFileInfo[],
-  options?: { userId?: string; projectId?: string; conversationId?: string }
+  options?: { userId?: string; projectId?: string; conversationId?: string; executionId?: string }
 ): Promise<ChatResponseResult> {
   const apiKey = process.env.GEMINI_API_KEY;
   const lastMessage = messages[messages.length - 1]?.content || "";
@@ -2134,6 +2135,7 @@ export async function chatWithProjectAssistant(
   const userId = options?.userId || 'usr_demo_builder';
   const projectId = options?.projectId || 'prj_default_roblox';
   const conversationId = options?.conversationId || 'conv_default';
+  const executionId = options?.executionId;
 
   // Build Persistent Memory Context
   const memoryContext = buildAgentContext(userId, projectId, conversationId, lastMessage, projectFiles);
@@ -2573,6 +2575,13 @@ A focused Luau script managing engine-level state and game loops.`,
 
     if (isProjectOrIdeasQuery && projectFiles && projectFiles.length > 0) {
       executionTrace.push({ stage: "Reasoning", details: "Understanding your request and evaluating project context...", completed: true, durationMs: 120 });
+      if (executionId) {
+        emitExecutionEvent(executionId, {
+          type: 'Reasoning',
+          message: 'Understanding your request and evaluating project context...',
+          status: 'completed'
+        });
+      }
       
       // Step 1: Run Read Project Tool
       const projectInfo = executeReadProject(projectFiles);
@@ -2582,9 +2591,28 @@ A focused Luau script managing engine-level state and game loops.`,
         completed: true, 
         durationMs: 200 
       });
+      if (executionId) {
+        emitExecutionEvent(executionId, {
+          type: 'Read',
+          message: `Read project structure: parsed ${projectInfo.fileCount} scripts, game archetype: "${projectInfo.projectType}"`,
+          status: 'completed',
+          metadata: {
+            filePath: 'default.project.json',
+            limit: projectInfo.fileCount
+          }
+        });
+      }
 
       // Step 2: Run Search Project Tool based on relevant keywords
       executionTrace.push({ stage: "Reasoning", details: "Identifying game's core gameplay and progression systems...", completed: true, durationMs: 110 });
+      if (executionId) {
+        emitExecutionEvent(executionId, {
+          type: 'Reasoning',
+          message: "Searching project for core gameplay, economy, and datastore scripts...",
+          status: 'completed'
+        });
+      }
+
       const searchTerms = ["donation", "booth", "economy", "leaderboard", "datastore", "quest", "combat", "click", "saving", "profile"];
       let foundMatches: string[] = [];
       let searchResults: ProjectFileInfo[] = [];
@@ -2606,6 +2634,17 @@ A focused Luau script managing engine-level state and game loops.`,
         completed: true, 
         durationMs: 150 
       });
+      if (executionId) {
+        emitExecutionEvent(executionId, {
+          type: 'Search',
+          message: `Grep/Search results found matches for keywords: [${foundMatches.join(', ')}]`,
+          status: 'completed',
+          metadata: {
+            query: foundMatches.join(', '),
+            filePath: uniqueSearchResults.map(f => f.name).join(', ')
+          }
+        });
+      }
 
       // Step 3: Read Important / Target files
       const readFiles: ProjectFileInfo[] = [];
@@ -2624,9 +2663,27 @@ A focused Luau script managing engine-level state and game loops.`,
           completed: true, 
           durationMs: 250 
         });
+        if (executionId) {
+          emitExecutionEvent(executionId, {
+            type: 'Read',
+            message: `Read source code details for target files: ${readFiles.map(r => r.name).join(', ')}`,
+            status: 'completed',
+            metadata: {
+              filePath: readFiles.map(r => r.path).join(', '),
+              limit: readFiles.length
+            }
+          });
+        }
       }
 
       executionTrace.push({ stage: "Reasoning", details: "Looking for progression and retention gaps to build customized solutions...", completed: true, durationMs: 130 });
+      if (executionId) {
+        emitExecutionEvent(executionId, {
+          type: 'Reasoning',
+          message: "Analyzing progression structure and designing custom retention mechanics...",
+          status: 'completed'
+        });
+      }
 
       // Build structured project understanding
       const understanding: ProjectUnderstanding = {
@@ -2883,6 +2940,60 @@ Directly provide ONLY the appropriate response for intent [${intentResult.intent
     };
 
     const parsed = await callGeminiWithFallback(ai, conversationPrompt, systemInstruction, schema);
+
+    if (executionId) {
+      emitExecutionEvent(executionId, {
+        type: 'Reasoning',
+        message: 'Structuring and validating Luau modifications for Roblox Studio...',
+        status: 'completed'
+      });
+    }
+
+    // Emit live events for generated scripts
+    if (parsed.generatedScript && executionId) {
+      const lineCount = parsed.generatedScript.code ? parsed.generatedScript.code.split('\n').length : 0;
+      emitExecutionEvent(executionId, {
+        type: 'Edit',
+        message: `Generated file: ${parsed.generatedScript.filePath || parsed.generatedScript.title} (${lineCount} lines)`,
+        status: 'completed',
+        metadata: {
+          filePath: parsed.generatedScript.filePath || parsed.generatedScript.title,
+          linesAdded: lineCount,
+          linesRemoved: 0
+        }
+      });
+    }
+
+    if (Array.isArray(parsed.filesGenerated) && executionId) {
+      for (const file of parsed.filesGenerated) {
+        const lineCount = file.code ? file.code.split('\n').length : 0;
+        emitExecutionEvent(executionId, {
+          type: 'Edit',
+          message: `Generated file: ${file.filePath || file.title} (${lineCount} lines)`,
+          status: 'completed',
+          metadata: {
+            filePath: file.filePath || file.title,
+            linesAdded: lineCount,
+            linesRemoved: 0
+          }
+        });
+      }
+    }
+
+    if (Array.isArray(parsed.studioOperations) && executionId) {
+      for (const op of parsed.studioOperations) {
+        emitExecutionEvent(executionId, {
+          type: 'Plan',
+          message: `Queued Studio operation: ${op.operation} on class ${op.className || 'Instance'}`,
+          status: 'completed',
+          metadata: {
+            className: op.className,
+            parentPath: op.parentPath,
+            properties: op.properties
+          }
+        });
+      }
+    }
 
     // Persist suggested ideas to memory for conversation memory iteration support
     if (Array.isArray(parsed.suggestedIdeas) && parsed.suggestedIdeas.length > 0) {
