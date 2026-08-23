@@ -1,0 +1,11 @@
+{
+  "messages": [
+    {
+      "role": "user",
+      "content": "اعمل نظام Daily Rewards بسيط"
+    }
+  ],
+  "projectId": "test_project_001",
+  "executionId": "test_exec_001",
+  "mode": "plan"
+}
