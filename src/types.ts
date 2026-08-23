@@ -12,6 +12,15 @@ export interface User {
   createdAt: string;
 }
 
+export interface UserExtended extends User {
+  isOnboarded: boolean;
+  onboardingCompletedAt?: string;
+  preferences?: {
+    theme: 'light' | 'dark' | 'system';
+    notifications: boolean;
+  };
+}
+
 export interface UserQuota {
   used: number;
   limit: number;
