@@ -919,43 +919,27 @@ export function createExpressApp() {
         }
       }
 
-      if (isStudioConnected) {
+if (isStudioConnected) {
         emitExecutionEvent(executionId, {
           type: 'Plan',
           message: '✓ Roblox Studio WebSync connected. Live synchronizer is online.',
           status: 'completed'
         });
-      } else {
-        if (requiresStudio) {
-          emitExecutionEvent(executionId, {
-            type: 'Error',
-            message: '❌ Connection Gate Locked: Roblox Studio Offline.\n\nThis task requires modifying scripts or objects inside the live Roblox Studio project, but Squeeze Companion Plugin is not connected.\n\nPlease open Roblox Studio, connect WebSync, and retry.',
-            status: 'failed'
-          });
-
-          const blockMsg = `⚠️ **Connection Gate Alert: Roblox Studio Offline**\n\nSqueeze cannot build, modify, or sync systems because Roblox Studio is offline.\n\n**To resolve:**\n1. Open your project in **Roblox Studio**.\n2. Ensure the **Squeeze Companion Plugin** is active and connected.\n3. Retry your request.`;
-
-          db.createMessage({
-            conversationId,
-            userId,
-            projectId,
-            role: 'assistant',
-            content: blockMsg,
-            executionId
-          });
-
-          return res.json({
-            success: false,
-            error: { message: 'Roblox Studio is offline.' },
-            message: blockMsg
-          });
-        } else {
-          emitExecutionEvent(executionId, {
-            type: 'Plan',
-            message: '○ Studio Offline. Proceeding with offline conceptual explanation / planning mode.',
-            status: 'completed'
-          });
-        }
+      } else if (requiresStudio) {
+        // Studio is offline but task requires Studio - proceed in offline mode
+        // The engineering agent will queue changes for later sync
+        emitExecutionEvent(executionId, {
+          type: 'Plan',
+          message: '○ Studio Offline. proceeding with offline mode. Changes will be synced when Studio reconnects.',
+          status: 'completed'
+        });
+} else {
+        // Studio is offline and task does not require Studio - proceed without Studio
+        emitExecutionEvent(executionId, {
+          type: 'Plan',
+          message: '○ Studio Offline. Running in conceptual mode without Studio connection.',
+          status: 'completed'
+        });
       }
 
       if (req.user) {
