@@ -697,10 +697,81 @@ Affected Systems: ${impact.affectedSystems.join(', ')}
   // STAGE 5: EXECUTE PLAN
   // ============================================================
 
-  private async executePlan(plan: ImplementationPlan): Promise<{ success: boolean; errors: RuntimeError[] }> {
+  private async executePlan(plan: ImplementationPlan): Promise<{ success: boolean; errors: RuntimeError[]; pendingOps?: string[] }> {
     const errors: RuntimeError[] = [];
+    const pendingOps: string[] = [];
 
     try {
+      // Check Studio connection status
+      const session = studioWebSync.getSession(this.projectId);
+      const isConnected = session && session.status === 'connected' && Date.now() - session.lastHeartbeat < 90000;
+
+      if (!isConnected) {
+        // Studio is offline - queue all changes for later sync
+        this.emit('Warning', 'Roblox Studio is offline. Changes will be synced when Studio reconnects.', 'warning');
+
+        // Queue create operations
+        for (const instance of plan.instancesToCreate) {
+          const opId = 'op_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+          pendingOps.push(opId);
+          studioWebSync.enqueueStudioOperation(this.projectId, {
+            operation: 'createInstance',
+            className: instance.className,
+            name: instance.name,
+            parentPath: instance.parentPath,
+            properties: instance.properties
+          }, undefined);
+          this.emit('Queue', `Queued instance creation "${instance.name}" for later sync`, 'pending', { operationId: opId });
+        }
+
+        // Queue file creation operations
+        for (const file of plan.filesToCreate) {
+          const opId = 'op_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+          pendingOps.push(opId);
+          const scriptType = file.className || (file.path.includes('.server.') ? 'Script' : file.path.includes('.client.') ? 'LocalScript' : 'ModuleScript');
+          studioWebSync.enqueueStudioOperation(this.projectId, {
+            operation: 'createScript',
+            className: scriptType,
+            path: file.path,
+            name: file.path.split('/').pop()!,
+            source: file.source
+          }, undefined);
+          this.emit('Queue', `Queued file creation "${file.path}" for later sync`, 'pending', { operationId: opId });
+        }
+
+        // Queue file modification operations
+        for (const file of plan.filesToModify) {
+          const opId = 'op_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+          pendingOps.push(opId);
+          studioWebSync.enqueueStudioOperation(this.projectId, {
+            operation: 'updateScript',
+            path: file.path,
+            source: '--!strict\n' + file.changes.trim()
+          }, undefined);
+          this.emit('Queue', `Queued file modification "${file.path}" for later sync`, 'pending', { operationId: opId });
+        }
+
+        // Queue remote creation operations
+        for (const remote of plan.remotesToCreate || []) {
+          const opId = 'op_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+          pendingOps.push(opId);
+          studioWebSync.enqueueStudioOperation(this.projectId, {
+            operation: 'createInstance',
+            className: 'RemoteEvent',
+            name: remote.name,
+            parentPath: remote.parentPath || 'ReplicatedStorage'
+          }, undefined);
+          this.emit('Queue', `Queued remote creation "${remote.name}" for later sync`, 'pending', { operationId: opId });
+        }
+
+        return {
+          success: pendingOps.length > 0,
+          errors,
+          pendingOps
+        };
+      }
+
+      // Studio is connected - execute changes normally
       // Create instances first
       for (const instance of plan.instancesToCreate) {
         this.emit('Create', `Creating ${instance.className} "${instance.name}"...`, 'running', { filePath: instance.parentPath });
