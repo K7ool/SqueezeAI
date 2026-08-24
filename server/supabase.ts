@@ -83,11 +83,11 @@ function logEnvDiagnosisOnce(supabaseUrl: string, serviceKey: string, anonKey: s
  *                      If false, loads the client using the public anon key.
  */
 export function getSupabaseClient(useServiceRole = true): SupabaseClient {
-  const rawUrl = process.env.SUPABASE_URL || 'https://ihqanbsxdfkvxtchwqmc.supabase.co';
-  const supabaseUrl = sanitizeSupabaseUrl(rawUrl);
-  const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlocWFuYnN4ZGZrdnh0Y2h3cW1jIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3OTM5ODE1OCwiZXhwIjoyMDk0OTc0MTU4fQ.cop-NJ1xgY3MYP2iwFSmbrgJvIWqWlVT4STTz7hll8w').trim();
-  const anonKey = (process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlocWFuYnN4ZGZrdnh0Y2h3cW1jIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkzOTgxNTgsImV4cCI6MjA5NDk3NDE1OH0.0nrnnxCkthnFJsFhczB7ZhI7WguT9Wy8AwIQ9mY8uzg').trim();
-
+  const rawUrl = process.env.SUPABASE_URL;
+  const supabaseUrl = rawUrl ? sanitizeSupabaseUrl(rawUrl) : 'https://ihqanbsxdfkvxtchwqmc.supabase.co';
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const anonKey = process.env.SUPABASE_ANON_KEY;
+  
   logEnvDiagnosisOnce(supabaseUrl, serviceKey, anonKey);
   
   if (useServiceRole) {
