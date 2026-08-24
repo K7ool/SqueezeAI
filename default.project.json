@@ -1,0 +1,68 @@
+{
+  "name": "Squeeze AI Studio",
+  "identifier": "com.squeeze.ai.studio",
+  "parent": "all",
+  "master": "studio",
+  "contents": [
+    {
+      "identifier": "ServerScriptService",
+      "type": "",
+      "children": [
+        {
+          "name": "Systems",
+          "type": "folder"
+        },
+        {
+          "name": "Modules",
+          "type": "folder"
+        },
+        {
+          "name": "Utils",
+          "type": "folder"
+        }
+      ]
+    },
+    {
+      "identifier": "ReplicatedStorage",
+      "type": "",
+      "children": [
+        {
+          "name": "Remotes",
+          "type": "folder"
+        },
+        {
+          "name": "Events",
+          "type": "folder"
+        },
+        {
+          "name": "Shared",
+          "type": "folder"
+        },
+        {
+          "name": "Modules",
+          "type": "folder"
+        }
+      ]
+    },
+    {
+      "identifier": "StarterPlayer",
+      "type": "",
+      "children": [
+        {
+          "name": "StarterPlayerScripts",
+          "type": "",
+          "children": [
+            {
+              "name": "UI",
+              "type": "folder"
+            },
+            {
+              "name": "Controllers",
+              "type": "folder"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

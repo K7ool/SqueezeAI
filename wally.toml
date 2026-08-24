@@ -1,0 +1,12 @@
+.name squeeze
+.url https://rubyware.github.io/wally-repository/
+
+[deps]
+-- Direct dependencies (managed by Wally)
+
+-- AI & ML
+-- auth = "1.1.0"  -- JSON Web Token authentication
+-- helix = "1.5.0" -- High-performance HTTP framework (if needed)
+
+-- Squeeze internal packages will be vendored or managed internally
+-- No external Roblox Lua dependencies required for core functionality
