@@ -19,6 +19,7 @@ import { analyzeProjectCodebase, ProjectFileInfo } from './ai.js';
 import { executeWithModelFallback, AITaskType } from './modelRegistry.js';
 import { GoogleGenAI, Type } from '@google/genai';
 import { db } from './db.js';
+import { getUserAIPreference, saveUserAIPreference, clearUserApiKey } from './aiPreferenceService.js';
 
 // ============================================================
 // TYPES & INTERFACES
@@ -1062,7 +1063,7 @@ Affected Systems: ${impact.affectedSystems.join(', ')}
   // UTILITY: EMIT EXECUTION EVENTS
   // ============================================================
 
-  private emit(type: string, message: string, status: 'pending' | 'running' | 'completed' | 'failed' | 'warning', metadata?: any) {
+private emit(type: string, message: string, status: 'pending' | 'running' | 'completed' | 'failed' | 'warning', metadata?: any) {
     emitExecutionEvent(this.executionId, {
       type,
       message,
@@ -1070,8 +1071,25 @@ Affected Systems: ${impact.affectedSystems.join(', ')}
       metadata
     });
   }
+
 }
 
+// Save user API key encrypted for future use
+function saveApiKeyForUser(apiKey: string, userId: string): void {
+  // Check if key is already saved
+  const existing = db.getUserMemoryByKey(userId, 'ai_provider_config');
+  if (existing && existing.value) {
+    // Don't overwrite if already set with high confidence
+    if (existing.confidence === 'high') {
+      return;
+    }
+  }
+  
+  saveUserAIPreference(userId, 'gemini', apiKey);
+}
+
+// ============================================================
+// EXPORTED FACTORY FUNCTION
 // ============================================================
 // EXPORTED FACTORY FUNCTION
 // ============================================================
@@ -1093,5 +1111,9 @@ export async function executeEngineeringTask(
   };
 
   const agent = new EngineeringAgent(projectId, executionId, apiKey);
+  
+  // Save the API key for future use (encrypted)
+  saveApiKeyForUser(apiKey, 'usr_demo_builder');
+  
   return await agent.executeTask(task);
 }
