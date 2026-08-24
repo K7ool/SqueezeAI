@@ -7,7 +7,7 @@ export interface ExecutionEvent {
   type: string; // 'Reasoning' | 'Read' | 'Search' | 'Grep' | 'Glob' | 'Edit' | 'Create' | 'Delete' | 'Rename' | 'Move' | 'Tool' | 'Research' | 'Plan' | 'Verification' | 'Warning' | 'Error' | 'Success'
   timestamp: number;
   message: string;
-  status: 'pending' | 'running' | 'completed' | 'failed';
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'warning';
   metadata?: {
     filePath?: string;
     linesAdded?: number;

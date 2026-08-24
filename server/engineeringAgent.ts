@@ -9,6 +9,7 @@
  * - Tests implementations
  * - Debugs errors
  * - Verifies success
+ * - Persists conversation and task memory
  */
 
 import { studio } from './agentStudioTool.js';
@@ -17,6 +18,7 @@ import { emitExecutionEvent } from './executionService.js';
 import { analyzeProjectCodebase, ProjectFileInfo } from './ai.js';
 import { executeWithModelFallback, AITaskType } from './modelRegistry.js';
 import { GoogleGenAI, Type } from '@google/genai';
+import { db } from './db.js';
 
 // ============================================================
 // TYPES & INTERFACES
@@ -89,12 +91,19 @@ export interface ProjectIssue {
   suggestion?: string;
 }
 
+export interface RemotePlanItem {
+  name: string;
+  parentPath: string;
+  reason: string;
+}
+
 export interface ImplementationPlan {
   goal: string;
   steps: PlanStep[];
   filesToCreate: FileToCreate[];
   filesToModify: FileToModify[];
   instancesToCreate: InstanceToCreate[];
+  remotesToCreate: RemotePlanItem[];
   dependencies: string[];
   risks: string[];
   verificationSteps: string[];
@@ -161,11 +170,13 @@ export class EngineeringAgent {
   private executionId: string;
   private apiKey: string;
   private ai: GoogleGenAI;
+  private memoryId: string;
 
-  constructor(projectId: string, executionId: string, apiKey: string) {
+  constructor(projectId: string, executionId: string, apiKey: string, memoryId?: string) {
     this.projectId = projectId;
     this.executionId = executionId;
     this.apiKey = apiKey;
+    this.memoryId = memoryId || `mem_${Date.now()}`;
     this.ai = new GoogleGenAI({
       apiKey,
       httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
@@ -174,56 +185,64 @@ export class EngineeringAgent {
 
   /**
    * MAIN EXECUTION FLOW
-   * Implements: Understand → Inspect → Plan → Execute → Test → Debug → Verify
+   * Implements: Understand → Inspect → Plan → Execute → Test → Debug → Verify → Persist
    */
   async executeTask(task: EngineeringTask): Promise<{ success: boolean; summary: string; details: any }> {
+    const events: Array<{ type: string; message: string; status: 'pending' | 'running' | 'completed' | 'failed' | 'warning'; metadata?: any }> = [];
+
     try {
-      // Stage 1: Understand Intent
-      this.emit('Reasoning', 'Understanding user intent and requirements...', 'running');
-      const intent = await this.understandIntent(task);
-      this.emit('Reasoning', `Intent understood: ${intent.summary}`, 'completed');
+      // Stage 1: Understand Intent with memory context
+      this.emitEvent(events, 'Reasoning', 'Understanding user intent and requirements...', 'running');
+      const intent = await this.understandIntentWithMemory(task);
+      this.emitEvent(events, 'Reasoning', `Intent understood: ${intent.summary}`, 'completed');
 
       // Stage 2: Inspect Project
-      this.emit('Inspection', 'Inspecting current project structure...', 'running');
+      this.emitEvent(events, 'Inspection', 'Inspecting current project structure...', 'running');
       const inspection = await this.inspectProject();
-      this.emit('Inspection', `Found ${inspection.systems.length} systems, ${inspection.issues.length} issues`, 'completed');
+      this.emitEvent(events, 'Inspection', `Found ${inspection.systems.length} systems, ${inspection.issues.length} issues`, 'completed');
 
-      // Stage 3: Analyze Dependencies
-      this.emit('Analysis', 'Analyzing dependencies and impact...', 'running');
+      // Stage 3: Analyze Dependencies with memory
+      this.emitEvent(events, 'Analysis', 'Analyzing dependencies and impact...', 'running');
       const impact = await this.analyzeDependencies(intent, inspection);
-      this.emit('Analysis', `Impact analysis complete: ${impact.affectedSystems.length} systems affected`, 'completed');
+      this.emitEvent(events, 'Analysis', `Impact analysis complete: ${impact.affectedSystems.length} systems affected`, 'completed');
 
-      // Stage 4: Create Implementation Plan
-      this.emit('Planning', 'Creating implementation plan...', 'running');
+      // Stage 4: Create Implementation Plan with memory
+      this.emitEvent(events, 'Planning', 'Creating implementation plan...', 'running');
       const plan = await this.createPlan(intent, inspection, impact);
-      this.emit('Planning', `Plan created: ${plan.steps.length} steps, ${plan.filesToCreate.length} new files`, 'completed');
+      this.emitEvent(events, 'Planning', `Plan created: ${plan.steps.length} steps, ${plan.filesToCreate.length} new files`, 'completed');
 
       // Stage 5: Execute Plan
-      this.emit('Execution', 'Executing implementation in Roblox Studio...', 'running');
+      this.emitEvent(events, 'Execution', 'Executing implementation in Roblox Studio...', 'running');
       const execution = await this.executePlan(plan);
-      this.emit('Execution', execution.success ? 'Implementation executed successfully' : 'Implementation failed', execution.success ? 'completed' : 'failed');
+      this.emitEvent(events, 'Execution', execution.success ? 'Implementation executed successfully' : 'Implementation failed', execution.success ? 'completed' : 'failed');
 
       if (!execution.success) {
         // Stage 6: Debug if failed
-        this.emit('Debugging', 'Analyzing errors and debugging...', 'running');
+        this.emitEvent(events, 'Debugging', 'Analyzing errors and debugging...', 'running');
         const debugResult = await this.debugErrors(execution.errors);
-        this.emit('Debugging', `Debugging complete: ${debugResult.fixesApplied} fixes applied`, 'completed');
+        this.emitEvent(events, 'Debugging', `Debugging complete: ${debugResult.fixesApplied} fixes applied`, 'completed');
 
         // Retry execution after fixes
-        this.emit('Execution', 'Re-executing after fixes...', 'running');
+        this.emitEvent(events, 'Execution', 'Re-executing after fixes...', 'running');
         const retryExecution = await this.executePlan(plan);
-        this.emit('Execution', retryExecution.success ? 'Re-execution successful' : 'Re-execution failed', retryExecution.success ? 'completed' : 'failed');
+        this.emitEvent(events, 'Execution', retryExecution.success ? 'Re-execution successful' : 'Re-execution failed', retryExecution.success ? 'completed' : 'failed');
+        execution.errors = retryExecution.errors;
       }
 
       // Stage 7: Test Implementation
-      this.emit('Testing', 'Running tests in Studio...', 'running');
+      this.emitEvent(events, 'Testing', 'Running tests in Studio...', 'running');
       const testResult = await this.runTests(plan);
-      this.emit('Testing', `Tests ${testResult.success ? 'passed' : 'failed'}: ${testResult.errors.length} errors found`, testResult.success ? 'completed' : 'failed');
+      this.emitEvent(events, 'Testing', `Tests ${testResult.success ? 'passed' : 'failed'}: ${testResult.errors.length} errors found`, testResult.success ? 'completed' : 'failed');
 
       // Stage 8: Verify Success
-      this.emit('Verification', 'Verifying implementation...', 'running');
+      this.emitEvent(events, 'Verification', 'Verifying implementation...', 'running');
       const verification = await this.verifyImplementation(plan, testResult);
-      this.emit('Verification', `Verification ${verification.verified ? 'passed' : 'failed'}: ${verification.testsPassed}/${verification.testsRan} checks passed`, verification.verified ? 'completed' : 'failed');
+      this.emitEvent(events, 'Verification', `Verification ${verification.verified ? 'passed' : 'failed'}: ${verification.testsPassed}/${verification.testsRan} checks passed`, verification.verified ? 'completed' : 'failed');
+
+      // Stage 9: Persist conversation memory
+      this.emitEvent(events, 'Persistence', 'Saving conversation and task memory...', 'running');
+      await this.persistTaskMemory(task, plan, verification, execution, inspection, intent);
+      this.emitEvent(events, 'Persistence', 'Conversation and task memory saved', 'completed');
 
       return {
         success: verification.verified,
@@ -234,21 +253,30 @@ export class EngineeringAgent {
           plan,
           execution,
           testResult,
-          verification
+          verification,
+          events
         }
       };
 
     } catch (error: any) {
-      this.emit('Error', `Engineering agent failed: ${error.message}`, 'failed');
+      this.emitEvent(events, 'Error', `Engineering agent failed: ${error.message}`, 'failed');
       throw error;
     }
+  }
+
+  private emitEvent(events: Array<{ type: string; message: string; status: 'pending' | 'running' | 'completed' | 'failed' | 'warning'; metadata?: any }>, type: string, message: string, status: 'pending' | 'running' | 'completed' | 'failed' | 'warning', metadata?: any) {
+    events.push({ type, message, status, metadata });
+    this.emit(type, message, status, metadata);
   }
 
   // ============================================================
   // STAGE 1: UNDERSTAND INTENT
   // ============================================================
 
-  private async understandIntent(task: EngineeringTask): Promise<{ summary: string; goals: string[]; requirements: string[] }> {
+  private async understandIntentWithMemory(task: EngineeringTask): Promise<{ summary: string; goals: string[]; requirements: string[]; memoryContext: string }> {
+    // Build memory context from persistent storage
+    const memContext = await this.buildMemoryContextForIntent(task);
+
     const systemInstruction = `You are analyzing a Roblox development task to understand the user's intent.
 
 Extract:
@@ -257,7 +285,9 @@ Extract:
 3. Expected behavior
 4. Any constraints
 
-Be specific and technical.`;
+Be specific and technical. Consider any relevant project context from memory.
+
+Previous project context: ${memContext}`;
 
     const schema = {
       type: Type.OBJECT,
@@ -277,7 +307,48 @@ Be specific and technical.`;
       { responseSchema: schema }
     );
 
-    return result;
+    return {
+      summary: result.summary,
+      goals: result.goals || [],
+      requirements: result.requirements || [],
+      memoryContext: memContext
+    };
+  }
+
+  private async buildMemoryContextForIntent(task: EngineeringTask): Promise<string> {
+    // Retrieve recent conversations and project memory for context
+    const recentConversations = db.getConversations('usr_demo_builder', this.projectId, task.userIntent);
+    const projectMemory = db.getProjectMemory('usr_demo_builder', this.projectId);
+
+    const contextParts: string[] = [];
+
+    if (projectMemory) {
+      if (projectMemory.majorSystems && projectMemory.majorSystems.length > 0) {
+        contextParts.push(`Active systems in project: ${projectMemory.majorSystems.join(', ')}`);
+      }
+      if (projectMemory.learnedConventions && Object.keys(projectMemory.learnedConventions).length > 0) {
+        contextParts.push(`Learned conventions: ${JSON.stringify(projectMemory.learnedConventions)}`);
+      }
+      if (projectMemory.commandSystem) {
+        contextParts.push(`Command system: ${projectMemory.commandSystem}`);
+      }
+      if (projectMemory.dataSystem) {
+        contextParts.push(`Data system: ${projectMemory.dataSystem}`);
+      }
+    }
+
+    // Check recent executions for similar tasks
+    const recentExecutions = db.getRecentExecutions('usr_demo_builder', this.projectId, 5);
+    const similarTasks = recentExecutions.filter(e =>
+      e.request.toLowerCase().includes(task.userIntent.toLowerCase()) ||
+      e.intent.toLowerCase().includes(task.userIntent.toLowerCase())
+    );
+
+    if (similarTasks.length > 0) {
+      contextParts.push(`Similar previous tasks: ${similarTasks.slice(0, 3).map(e => e.request.slice(0, 60)).join('; ')}`);
+    }
+
+    return contextParts.join(' | ') || 'No prior project context available.';
   }
 
   // ============================================================
@@ -631,7 +702,7 @@ Affected Systems: ${impact.affectedSystems.join(', ')}
     try {
       // Create instances first
       for (const instance of plan.instancesToCreate) {
-        this.emit('Create', `Creating ${instance.className} "${instance.name}"...`, 'running');
+        this.emit('Create', `Creating ${instance.className} "${instance.name}"...`, 'running', { filePath: instance.parentPath });
         const result = await studio.createInstance(this.projectId, {
           className: instance.className,
           name: instance.name,
@@ -665,7 +736,7 @@ Affected Systems: ${impact.affectedSystems.join(', ')}
         }
       }
 
-      // Modify existing files
+      // Modify existing files - with proper read-patch-verify cycle and self-repair
       for (const file of plan.filesToModify) {
         this.emit('Edit', `Modifying ${file.path}...`, 'running', { filePath: file.path });
 
@@ -679,12 +750,33 @@ Affected Systems: ${impact.affectedSystems.join(', ')}
           continue;
         }
 
-        // Apply modification
+        // Apply modification based on type with strict mode handling
         let newSource = current.file.source;
         if (file.modification === 'patch') {
-          newSource = newSource + '\n\n' + file.changes;
+          // Insert patch after existing code, with strict mode if not present
+          newSource = current.file.source.trim();
+          if (!newSource.includes('--!strict')) {
+            newSource = '--!strict\n' + newSource;
+          }
+          newSource += '\n\n' + file.changes.trim();
         } else if (file.modification === 'replace') {
           newSource = file.changes;
+          // Ensure strict mode in replaced content
+          if (!newSource.includes('--!strict')) {
+            newSource = '--!strict\n' + newSource;
+          }
+        } else if (file.modification === 'extend') {
+          // Extend the existing functionality - append to the end
+          newSource = current.file.source.trim() + '\n' + file.changes.trim();
+          // Ensure strict mode
+          if (!newSource.includes('--!strict')) {
+            newSource = '--!strict\n' + newSource;
+          }
+        }
+
+        // Validate the new source has strict mode
+        if (!newSource.includes('--!strict')) {
+          newSource = '--!strict\n' + newSource;
         }
 
         const result = await studio.updateScript(this.projectId, {
@@ -696,6 +788,49 @@ Affected Systems: ${impact.affectedSystems.join(', ')}
           errors.push({
             message: `Failed to update ${file.path}: ${result.summary}`,
             source: file.path
+          });
+
+          // Attempt self-repair: try reading and fixing common issues
+          if (result.summary.includes('conflict') || result.summary.includes('version')) {
+            this.emit('Warning', `Version conflict on ${file.path}, attempting repair...`, 'warning');
+            // Re-read and try a simpler patch approach
+            const retryCurrent = await studio.readScript(this.projectId, file.path);
+            if (retryCurrent.success) {
+              const baseSource = retryCurrent.file.source.trim();
+              const repairSource = '--!strict\n' + baseSource + '\n' + file.changes.trim();
+              const retryResult = await studio.updateScript(this.projectId, {
+                path: file.path,
+                source: repairSource
+              });
+              if (retryResult.success) {
+                this.emit('Warning', 'Repair successful', 'completed');
+              }
+            }
+          }
+        } else {
+          // Verify the change was applied correctly
+          this.emit('Verification', `Verifying modification to ${file.path}`, 'running');
+          const verify = await studio.readScript(this.projectId, file.path);
+          if (verify.success && verify.file.source === newSource) {
+            this.emit('Verification', `Modification verified in ${file.path}`, 'completed');
+          } else {
+            this.emit('Warning', `Modification verification mismatch for ${file.path}`, 'warning');
+          }
+        }
+      }
+
+      // Create any configured remote events/functions
+      for (const remote of plan.remotesToCreate || []) {
+        this.emit('Create', `Creating remote ${remote.name}...`, 'running');
+        const result = await studio.createInstance(this.projectId, {
+          className: 'RemoteEvent',
+          name: remote.name,
+          parentPath: remote.parentPath || 'ReplicatedStorage'
+        });
+        if (!result.success) {
+          errors.push({
+            message: `Failed to create remote ${remote.name}: ${result.summary}`,
+            source: remote.parentPath
           });
         }
       }
@@ -810,10 +945,124 @@ Affected Systems: ${impact.affectedSystems.join(', ')}
   }
 
   // ============================================================
+  // STAGE 9: PERSIST TASK MEMORY
+  // ============================================================
+
+  private async persistTaskMemory(
+    task: EngineeringTask,
+    plan: ImplementationPlan,
+    verification: VerificationResult,
+    execution: { success: boolean; errors: RuntimeError[] },
+    inspection: ProjectInspection,
+    intent: { summary: string; goals: string[]; requirements: string[]; memoryContext: string }
+  ): Promise<void> {
+    try {
+      // Save conversation context
+      const conversationId = `conv_${this.executionId}`;
+
+      // Update project memory with new systems/features
+      const projectMemory = db.getProjectMemory('usr_demo_builder', this.projectId) || {
+        userId: 'usr_demo_builder',
+        projectId: this.projectId,
+        id: '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        version: 1,
+        majorSystems: [],
+        services: [],
+        dataSystem: 'DataStoreService',
+        commandSystem: 'None',
+        learnedConventions: {},
+        importantFiles: []
+      };
+
+      // Merge newly discovered systems
+      const newSystems = inspection.systems
+        .filter(s => s.health !== 'healthy')
+        .map(s => s.name);
+
+      if (newSystems.length > 0) {
+        const existingSystems = projectMemory.majorSystems || [];
+        const mergedSystems = Array.from(new Set([...existingSystems, ...newSystems]));
+        projectMemory.majorSystems = mergedSystems;
+      }
+
+      // Update learned conventions from the task
+      if (plan.steps.some(s => s.type === 'modify')) {
+        // Extract naming conventions from the changes
+        const allChanges = plan.filesToModify.map(f => f.changes).join(' ');
+        if (/--!strict/.test(allChanges)) {
+          projectMemory.learnedConventions = projectMemory.learnedConventions || {};
+          projectMemory.learnedConventions['use.strict'] = 'true';
+        }
+      }
+
+      // Save updated project memory
+      db.saveProjectMemory({
+        ...projectMemory,
+        userId: 'usr_demo_builder',
+        projectId: this.projectId,
+        projectName: task.feature,
+        majorSystems: projectMemory.majorSystems,
+        learnedConventions: projectMemory.learnedConventions,
+        updatedAt: new Date().toISOString(),
+        version: (projectMemory.version || 1) + 1
+      });
+
+      // Save execution memory
+      db.saveExecutionMemory({
+        userId: 'usr_demo_builder',
+        projectId: this.projectId,
+        conversationId: conversationId,
+        request: task.userIntent,
+        intent: intent.summary,
+        planSummary: plan.goal,
+        toolsUsed: ['EngineeringAgent', 'studioWebSync', 'GoogleGenAI'],
+        filesChanged: [
+          ...plan.filesToCreate.map(f => f.path),
+          ...plan.filesToModify.map(f => f.path)
+        ],
+        instancesChanged: plan.instancesToCreate.map(i => i.name),
+        errors: execution.errors.map(e => ({
+          error: e.message,
+          file: e.source,
+          resolved: false
+        })),
+        verificationStatus: verification.verified ? 'passed' : 'incomplete',
+        finalStatus: verification.verified ? 'completed' : 'failed'
+      });
+
+      // Save conversation memory with current feature tracking
+      db.saveConversationMemory({
+        id: conversationId,
+        conversationId,
+        userId: 'usr_demo_builder',
+        projectId: this.projectId,
+        currentFeature: plan.goal,
+        userIntent: intent.summary,
+        importantDecisions: plan.steps
+          .filter(s => s.type === 'modify' || s.type === 'create')
+          .map(s => s.description),
+        relevantFiles: [
+          ...plan.filesToCreate.map(f => f.path),
+          ...plan.filesToModify.map(f => f.path)
+        ],
+        recentOperations: plan.steps.map(s => s.description),
+        updatedAt: new Date().toISOString()
+      });
+
+      console.log(`[Memory] Task memory persisted for execution ${this.executionId}`);
+
+    } catch (err) {
+      console.warn('[Memory] Failed to persist task memory:', err);
+    }
+  }
+
+  // ============================================================
   // UTILITY: EMIT EXECUTION EVENTS
   // ============================================================
 
-  private emit(type: string, message: string, status: 'pending' | 'running' | 'completed' | 'failed', metadata?: any) {
+  private emit(type: string, message: string, status: 'pending' | 'running' | 'completed' | 'failed' | 'warning', metadata?: any) {
     emitExecutionEvent(this.executionId, {
       type,
       message,
