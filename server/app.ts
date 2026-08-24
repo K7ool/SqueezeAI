@@ -925,19 +925,12 @@ if (isStudioConnected) {
           message: '✓ Roblox Studio WebSync connected. Live synchronizer is online.',
           status: 'completed'
         });
-      } else if (requiresStudio) {
-        // Studio is offline but task requires Studio - proceed in offline mode
+      } else {
+        // Studio is offline - proceed in offline mode
         // The engineering agent will queue changes for later sync
         emitExecutionEvent(executionId, {
           type: 'Plan',
           message: '○ Studio Offline. proceeding with offline mode. Changes will be synced when Studio reconnects.',
-          status: 'completed'
-        });
-} else {
-        // Studio is offline and task does not require Studio - proceed without Studio
-        emitExecutionEvent(executionId, {
-          type: 'Plan',
-          message: '○ Studio Offline. Running in conceptual mode without Studio connection.',
           status: 'completed'
         });
       }
